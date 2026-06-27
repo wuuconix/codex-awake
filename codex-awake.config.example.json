@@ -1,0 +1,18 @@
+{
+  "authDir": "C:\\Users\\wuuconix\\.cli-proxy-api",
+  "dbPath": "data/codex-awake.sqlite",
+  "quotaUrl": "https://chatgpt.com/backend-api/wham/usage",
+  "quotaConcurrency": 2,
+  "quotaDelayMs": 10000,
+  "quotaTimeoutMs": 30000,
+  "proxyUrl": "http://127.0.0.1:7890",
+  "probeMinIntervalMs": 180000,
+  "probeCooldownMs": 86400000,
+  "probeTimeoutMs": 120000,
+  "dormantToleranceSeconds": 180,
+  "dormantMaxUsedPercent": 5,
+  "probeModel": "gpt-5.4-mini",
+  "probePrompt": "hi",
+  "codexBin": "codex",
+  "userAgent": "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"
+}
