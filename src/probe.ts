@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
@@ -24,6 +24,7 @@ async function createCodexHome(account: AuthAccount): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'codex-awake-'));
   await mkdir(path.join(root, 'workspace'), { recursive: true });
   await writeJsonFile(path.join(root, 'auth.json'), authJsonForCodexCli(account));
+  await writeFile(path.join(root, 'config.toml'), 'preferred_auth_method = "chatgpt"\n', 'utf8');
   return root;
 }
 
@@ -43,6 +44,37 @@ function proxyEnv(config: AppConfig): NodeJS.ProcessEnv {
     ALL_PROXY: process.env.ALL_PROXY ?? config.proxyUrl,
     NO_PROXY: process.env.NO_PROXY
   };
+}
+
+function childEnv(config: AppConfig, codexHome: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...proxyEnv(config), CODEX_HOME: codexHome };
+  delete env.OPENAI_API_KEY;
+  delete env.OPENAI_BASE_URL;
+  delete env.OPENAI_ORG_ID;
+  delete env.OPENAI_PROJECT;
+  delete env.OPENAI_PROJECT_ID;
+  return env;
+}
+
+async function readTextIfExists(filePath: string): Promise<string | null> {
+  try {
+    const text = (await readFile(filePath, 'utf8')).trim();
+    return text.length > 0 ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+function successOutputSummary(
+  result: { all?: string; stdout?: string; stderr?: string },
+  lastMessage: string | null
+): string | null {
+  const pieces: string[] = [];
+  if (lastMessage) pieces.push(`last_message=${lastMessage}`);
+  if (result.all?.trim()) pieces.push(`output=${result.all.trim()}`);
+  if (result.stderr?.trim()) pieces.push(`stderr=${result.stderr.trim()}`);
+  if (result.stdout?.trim()) pieces.push(`stdout=${result.stdout.trim()}`);
+  return pieces.length > 0 ? truncate(pieces.join('\n'), 4000) : null;
 }
 
 function errorSummary(error: unknown): string {
@@ -96,7 +128,7 @@ export async function probeCandidate(
     codexHome = await createCodexHome(account);
     const workspace = path.join(codexHome, 'workspace');
     const lastMessagePath = path.join(codexHome, 'last-message.txt');
-    await execa(
+    const result = await execa(
       config.codexBin,
       [
         'exec',
@@ -112,7 +144,7 @@ export async function probeCandidate(
         config.probePrompt
       ],
       {
-        env: { ...proxyEnv(config), CODEX_HOME: codexHome },
+        env: childEnv(config, codexHome),
         stdin: 'ignore',
         all: true,
         timeout: config.probeTimeoutMs,
@@ -121,7 +153,15 @@ export async function probeCandidate(
         reject: true
       }
     );
-    store.finishProbe(probeRunId, 'success', 0, null);
+    const lastMessage = await readTextIfExists(lastMessagePath);
+    const output = successOutputSummary(result, lastMessage);
+    if (!output) {
+      const message = 'codex exec exited 0 but produced no last message/stdout/stderr';
+      store.finishProbe(probeRunId, 'failed', 1, message, null);
+      store.markCandidate(candidate.id, 'failed');
+      return { candidate, status: 'failed', exitCode: 1, error: message };
+    }
+    store.finishProbe(probeRunId, 'success', 0, null, output);
     store.markCandidate(candidate.id, 'probed');
     return { candidate, status: 'success', exitCode: 0, error: null };
   } catch (error) {
@@ -130,7 +170,7 @@ export async function probeCandidate(
         ? Number((error as { exitCode?: unknown }).exitCode ?? 1)
         : 1;
     const message = errorSummary(error);
-    store.finishProbe(probeRunId, 'failed', Number.isFinite(exitCode) ? exitCode : 1, message);
+    store.finishProbe(probeRunId, 'failed', Number.isFinite(exitCode) ? exitCode : 1, message, null);
     store.markCandidate(candidate.id, 'failed');
     return { candidate, status: 'failed', exitCode: Number.isFinite(exitCode) ? exitCode : 1, error: message };
   } finally {

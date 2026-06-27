@@ -23,8 +23,8 @@ export function openStore(dbPath: string) {
     hasRecentSuccessfulProbe: (accountKey: string, cooldownMs: number) =>
       hasRecentSuccessfulProbe(db, accountKey, cooldownMs),
     insertProbeStart: (candidate: StoredCandidate, command: string) => insertProbeStart(db, candidate, command),
-    finishProbe: (id: number, status: string, exitCode: number | null, error: string | null) =>
-      finishProbe(db, id, status, exitCode, error),
+    finishProbe: (id: number, status: string, exitCode: number | null, error: string | null, output?: string | null) =>
+      finishProbe(db, id, status, exitCode, error, output),
     acquireLock: (name: string, ttlMs: number) => acquireLock(db, name, ttlMs),
     releaseLock: (name: string, owner: string) => releaseLock(db, name, owner),
     showSummary: () => showSummary(db)
@@ -105,6 +105,10 @@ function migrate(db: Database.Database): void {
     create index if not exists idx_probe_runs_account on probe_runs(account_key, started_at_ms);
     create index if not exists idx_quota_snapshots_account on quota_snapshots(account_key, created_at_ms);
   `);
+  const probeColumns = db.prepare(`pragma table_info(probe_runs)`).all() as Array<{ name: string }>;
+  if (!probeColumns.some((column) => column.name === 'output')) {
+    db.prepare(`alter table probe_runs add column output text`).run();
+  }
 }
 
 function upsertAccount(db: Database.Database, account: AuthAccount, planType?: string | null): void {
@@ -248,12 +252,20 @@ function insertProbeStart(db: Database.Database, candidate: StoredCandidate, com
   return Number(result.lastInsertRowid);
 }
 
-function finishProbe(db: Database.Database, id: number, status: string, exitCode: number | null, error: string | null): void {
-  db.prepare(`update probe_runs set status = ?, finished_at_ms = ?, exit_code = ?, error = ? where id = ?`).run(
+function finishProbe(
+  db: Database.Database,
+  id: number,
+  status: string,
+  exitCode: number | null,
+  error: string | null,
+  output?: string | null
+): void {
+  db.prepare(`update probe_runs set status = ?, finished_at_ms = ?, exit_code = ?, error = ?, output = ? where id = ?`).run(
     status,
     Date.now(),
     exitCode,
     error,
+    output ?? null,
     id
   );
 }
@@ -291,7 +303,7 @@ function showSummary(db: Database.Database): unknown {
     recentProbes: db
       .prepare(
         `select id, file_name as fileName, status, started_at_ms as startedAtMs, finished_at_ms as finishedAtMs,
-          exit_code as exitCode, error
+          exit_code as exitCode, error, output
          from probe_runs
          order by started_at_ms desc
          limit 20`

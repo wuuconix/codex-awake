@@ -31,6 +31,7 @@ All commands accept `--config <path>`. Commands that would wake accounts also ac
 - Probe execution is serialized globally and waits at least `probeMinIntervalMs` between starts.
 - `codex exec` runs with an isolated temporary `CODEX_HOME`.
 - A hung `codex exec` is killed after `probeTimeoutMs` and recorded as a failed probe instead of blocking the run forever.
+- Probe subprocesses clear `OPENAI_API_KEY`/provider env vars, force ChatGPT auth in the temporary config, and store the Codex CLI output summary in `probe_runs.output`.
 
 ## Windows Task Scheduler
 
