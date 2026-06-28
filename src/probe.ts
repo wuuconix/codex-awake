@@ -5,11 +5,12 @@ import { execa } from 'execa';
 import type { AppConfig, AuthAccount } from './types.js';
 import type { Store, StoredCandidate } from './db.js';
 import { authJsonForCodexCli } from './auth.js';
+import { fetchQuota } from './quota.js';
 import { removeDirQuiet, sleep, truncate, writeJsonFile } from './util.js';
 
 export type ProbeResult = {
   candidate: StoredCandidate;
-  status: 'success' | 'failed' | 'skipped';
+  status: 'success' | 'failed' | 'skipped' | 'ineffective';
   exitCode: number | null;
   error: string | null;
 };
@@ -75,6 +76,13 @@ function successOutputSummary(
   if (result.stderr?.trim()) pieces.push(`stderr=${result.stderr.trim()}`);
   if (result.stdout?.trim()) pieces.push(`stdout=${result.stdout.trim()}`);
   return pieces.length > 0 ? truncate(pieces.join('\n'), 4000) : null;
+}
+
+function quotaWindowStillFull(candidate: StoredCandidate, result: Awaited<ReturnType<typeof fetchQuota>>, toleranceSeconds: number): boolean {
+  if (!result.ok) return false;
+  const window = result.windows.find((item) => item.scope === candidate.windowScope) ?? result.windows[0];
+  if (!window || window.limitWindowSeconds === null || window.remainingSeconds === null) return false;
+  return Math.abs(window.remainingSeconds - window.limitWindowSeconds) <= toleranceSeconds;
 }
 
 function errorSummary(error: unknown): string {
@@ -160,6 +168,20 @@ export async function probeCandidate(
       store.finishProbe(probeRunId, 'failed', 1, message, null);
       store.markCandidate(candidate.id, 'failed');
       return { candidate, status: 'failed', exitCode: 1, error: message };
+    }
+    const refreshed = await fetchQuota(account, config);
+    store.insertQuotaSnapshot(refreshed);
+    if (!refreshed.ok) {
+      const message = `post-probe quota refresh failed: ${refreshed.statusCode} ${refreshed.error ?? ''}`.trim();
+      store.finishProbe(probeRunId, 'failed', 1, message, output);
+      store.markCandidate(candidate.id, 'failed');
+      return { candidate, status: 'failed', exitCode: 1, error: message };
+    }
+    if (quotaWindowStillFull(candidate, refreshed, config.dormantToleranceSeconds)) {
+      const message = 'codex exec completed, but quota window remained at a full reset duration';
+      store.finishProbe(probeRunId, 'ineffective', 0, message, output);
+      store.markCandidate(candidate.id, 'ineffective');
+      return { candidate, status: 'ineffective', exitCode: 0, error: message };
     }
     store.finishProbe(probeRunId, 'success', 0, null, output);
     store.markCandidate(candidate.id, 'probed');

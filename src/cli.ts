@@ -7,7 +7,7 @@ import pino from 'pino';
 import { loadAuthAccounts } from './auth.js';
 import { loadConfig } from './config.js';
 import { currentRunId, openStore } from './db.js';
-import { buildWakeCandidates, fetchQuota, refreshQuotas } from './quota.js';
+import { buildWakeCandidates, refreshQuotas } from './quota.js';
 import { buildProbeCommand, probeCandidates } from './probe.js';
 import type { AppConfig, AuthAccount, WakeCandidate } from './types.js';
 
@@ -137,24 +137,11 @@ async function runProbePhase(
     {
       success: results.filter((item) => item.status === 'success').length,
       failed: results.filter((item) => item.status === 'failed').length,
-      skipped: results.filter((item) => item.status === 'skipped').length
+      skipped: results.filter((item) => item.status === 'skipped').length,
+      ineffective: results.filter((item) => item.status === 'ineffective').length
     },
     'probe phase complete'
   );
-
-  if (!options.dryRun) {
-    const byKey = new Map(accounts.map((account) => [account.accountKey, account]));
-    for (const result of results.filter((item) => item.status === 'success')) {
-      const account = byKey.get(result.candidate.accountKey);
-      if (!account) continue;
-      const refreshed = await fetchQuota(account, config);
-      store.insertQuotaSnapshot(refreshed);
-      logger.info(
-        { fileName: account.fileName, ok: refreshed.ok, statusCode: refreshed.statusCode, windows: refreshed.windows.length },
-        'post-probe quota refreshed'
-      );
-    }
-  }
 }
 
 async function doctor(config: AppConfig): Promise<void> {
