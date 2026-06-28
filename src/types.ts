@@ -13,6 +13,7 @@ export type AppConfig = {
   probeVerifyDelayMs: number;
   probeVerifyAttempts: number;
   probeVerifyIntervalMs: number;
+  probeVerifyToleranceSeconds: number;
   dormantToleranceSeconds: number;
   dormantMaxUsedPercent: number;
   probeModel: string;

@@ -25,6 +25,7 @@ const ConfigSchema = z.object({
   probeVerifyDelayMs: z.number().int().min(0).default(60_000),
   probeVerifyAttempts: z.number().int().min(1).max(10).default(3),
   probeVerifyIntervalMs: z.number().int().min(0).default(60_000),
+  probeVerifyToleranceSeconds: z.number().int().min(0).default(30),
   dormantToleranceSeconds: z.number().int().min(0).default(180),
   dormantMaxUsedPercent: z.number().min(0).max(100).default(5),
   probeModel: z.string().min(1).default('gpt-5.4-mini'),

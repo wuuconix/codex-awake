@@ -59,6 +59,7 @@ describe('sqlite and probe queue', () => {
         probeVerifyDelayMs: 60_000,
         probeVerifyAttempts: 3,
         probeVerifyIntervalMs: 60_000,
+        probeVerifyToleranceSeconds: 30,
         dormantToleranceSeconds: 180,
         dormantMaxUsedPercent: 5,
         probeModel: 'gpt-5.4-mini',

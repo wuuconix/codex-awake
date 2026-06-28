@@ -112,7 +112,7 @@ async function verifyPostProbeQuota(
       continue;
     }
 
-    if (!quotaWindowStillFull(candidate, refreshed, config.dormantToleranceSeconds)) {
+    if (!quotaWindowStillFull(candidate, refreshed, config.probeVerifyToleranceSeconds)) {
       return { status: 'success', error: null };
     }
 
