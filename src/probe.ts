@@ -1,5 +1,4 @@
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import type { AppConfig, AuthAccount, QuotaFetchResult, QuotaWindow } from './types.js';
@@ -21,8 +20,9 @@ export function buildProbeCommand(config: AppConfig): string {
   )} ${JSON.stringify(config.probePrompt)}`;
 }
 
-async function createCodexHome(account: AuthAccount): Promise<string> {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'codex-awake-'));
+async function createCodexHome(account: AuthAccount, config: AppConfig): Promise<string> {
+  await mkdir(config.codexHomeParentDir, { recursive: true });
+  const root = await mkdtemp(path.join(config.codexHomeParentDir, 'codex-awake-'));
   await mkdir(path.join(root, 'workspace'), { recursive: true });
   await writeJsonFile(path.join(root, 'auth.json'), authJsonForCodexCli(account));
   await writeFile(path.join(root, 'config.toml'), 'preferred_auth_method = "chatgpt"\n', 'utf8');
@@ -183,7 +183,7 @@ export async function probeCandidate(
 
   let codexHome: string | null = null;
   try {
-    codexHome = await createCodexHome(account);
+    codexHome = await createCodexHome(account, config);
     const workspace = path.join(codexHome, 'workspace');
     const lastMessagePath = path.join(codexHome, 'last-message.txt');
     const result = await execa(

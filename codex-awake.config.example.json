@@ -6,6 +6,7 @@
   "quotaDelayMs": 10000,
   "quotaTimeoutMs": 30000,
   "proxyUrl": "http://127.0.0.1:7890",
+  "codexHomeParentDir": "data/codex-homes",
   "probeMinIntervalMs": 180000,
   "probeCooldownMs": 86400000,
   "probeTimeoutMs": 120000,

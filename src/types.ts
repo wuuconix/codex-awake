@@ -6,6 +6,7 @@ export type AppConfig = {
   quotaDelayMs: number;
   quotaTimeoutMs: number;
   proxyUrl: string | null;
+  codexHomeParentDir: string;
   probeMinIntervalMs: number;
   probeCooldownMs: number;
   probeTimeoutMs: number;

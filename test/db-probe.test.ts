@@ -52,6 +52,7 @@ describe('sqlite and probe queue', () => {
         quotaDelayMs: 0,
         quotaTimeoutMs: 1000,
         proxyUrl: null,
+        codexHomeParentDir: path.join(dir, 'codex-homes'),
         probeMinIntervalMs: 180_000,
         probeCooldownMs: 86_400_000,
         probeTimeoutMs: 120_000,

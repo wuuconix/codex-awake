@@ -18,6 +18,7 @@ const ConfigSchema = z.object({
     .optional()
     .default(process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY ?? process.env.ALL_PROXY ?? null)
     .transform((value) => (value && value.length > 0 ? value : null)),
+  codexHomeParentDir: z.string().min(1).default(path.join('data', 'codex-homes')),
   probeMinIntervalMs: z.number().int().min(0).default(180_000),
   probeCooldownMs: z.number().int().min(0).default(86_400_000),
   probeTimeoutMs: z.number().int().min(10_000).default(120_000),
@@ -42,6 +43,7 @@ export function loadConfig(configPath?: string): AppConfig {
   return {
     ...parsed,
     authDir: path.resolve(parsed.authDir),
-    dbPath: path.resolve(parsed.dbPath)
+    dbPath: path.resolve(parsed.dbPath),
+    codexHomeParentDir: path.resolve(parsed.codexHomeParentDir)
   };
 }
