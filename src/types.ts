@@ -9,6 +9,9 @@ export type AppConfig = {
   probeMinIntervalMs: number;
   probeCooldownMs: number;
   probeTimeoutMs: number;
+  probeVerifyDelayMs: number;
+  probeVerifyAttempts: number;
+  probeVerifyIntervalMs: number;
   dormantToleranceSeconds: number;
   dormantMaxUsedPercent: number;
   probeModel: string;

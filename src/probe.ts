@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
-import type { AppConfig, AuthAccount } from './types.js';
+import type { AppConfig, AuthAccount, QuotaFetchResult, QuotaWindow } from './types.js';
 import type { Store, StoredCandidate } from './db.js';
 import { authJsonForCodexCli } from './auth.js';
 import { fetchQuota } from './quota.js';
@@ -78,11 +78,61 @@ function successOutputSummary(
   return pieces.length > 0 ? truncate(pieces.join('\n'), 4000) : null;
 }
 
-function quotaWindowStillFull(candidate: StoredCandidate, result: Awaited<ReturnType<typeof fetchQuota>>, toleranceSeconds: number): boolean {
+function matchingQuotaWindow(candidate: StoredCandidate, result: QuotaFetchResult): QuotaWindow | null {
+  return result.windows.find((item) => item.scope === candidate.windowScope) ?? result.windows[0] ?? null;
+}
+
+function quotaWindowStillFull(candidate: StoredCandidate, result: QuotaFetchResult, toleranceSeconds: number): boolean {
   if (!result.ok) return false;
-  const window = result.windows.find((item) => item.scope === candidate.windowScope) ?? result.windows[0];
+  const window = matchingQuotaWindow(candidate, result);
   if (!window || window.limitWindowSeconds === null || window.remainingSeconds === null) return false;
   return Math.abs(window.remainingSeconds - window.limitWindowSeconds) <= toleranceSeconds;
+}
+
+async function verifyPostProbeQuota(
+  candidate: StoredCandidate,
+  account: AuthAccount,
+  config: AppConfig,
+  store: Store
+): Promise<{ status: 'success' | 'failed' | 'ineffective'; error: string | null }> {
+  let lastError: string | null = null;
+  let lastFullWindow: QuotaWindow | null = null;
+
+  for (let attempt = 1; attempt <= config.probeVerifyAttempts; attempt += 1) {
+    const waitMs = attempt === 1 ? config.probeVerifyDelayMs : config.probeVerifyIntervalMs;
+    if (waitMs > 0) await sleep(waitMs);
+
+    const refreshed = await fetchQuota(account, config);
+    store.insertQuotaSnapshot(refreshed);
+
+    if (!refreshed.ok) {
+      lastError = `post-probe quota refresh failed on attempt ${attempt}/${config.probeVerifyAttempts}: ${
+        refreshed.statusCode
+      } ${refreshed.error ?? ''}`.trim();
+      continue;
+    }
+
+    if (!quotaWindowStillFull(candidate, refreshed, config.dormantToleranceSeconds)) {
+      return { status: 'success', error: null };
+    }
+
+    lastFullWindow = matchingQuotaWindow(candidate, refreshed);
+  }
+
+  if (lastError && !lastFullWindow) {
+    return { status: 'failed', error: lastError };
+  }
+
+  const remaining = lastFullWindow?.remainingSeconds;
+  const limit = lastFullWindow?.limitWindowSeconds;
+  return {
+    status: 'ineffective',
+    error: `codex exec completed, but quota window remained full after ${config.probeVerifyAttempts} verification attempt(s)${
+      remaining !== null && remaining !== undefined && limit !== null && limit !== undefined
+        ? `: remainingSeconds=${remaining}, limitWindowSeconds=${limit}`
+        : ''
+    }`
+  };
 }
 
 function errorSummary(error: unknown): string {
@@ -169,16 +219,15 @@ export async function probeCandidate(
       store.markCandidate(candidate.id, 'failed');
       return { candidate, status: 'failed', exitCode: 1, error: message };
     }
-    const refreshed = await fetchQuota(account, config);
-    store.insertQuotaSnapshot(refreshed);
-    if (!refreshed.ok) {
-      const message = `post-probe quota refresh failed: ${refreshed.statusCode} ${refreshed.error ?? ''}`.trim();
+    const verification = await verifyPostProbeQuota(candidate, account, config, store);
+    if (verification.status === 'failed') {
+      const message = verification.error ?? 'post-probe quota verification failed';
       store.finishProbe(probeRunId, 'failed', 1, message, output);
       store.markCandidate(candidate.id, 'failed');
       return { candidate, status: 'failed', exitCode: 1, error: message };
     }
-    if (quotaWindowStillFull(candidate, refreshed, config.dormantToleranceSeconds)) {
-      const message = 'codex exec completed, but quota window remained at a full reset duration';
+    if (verification.status === 'ineffective') {
+      const message = verification.error ?? 'codex exec completed, but quota window remained at a full reset duration';
       store.finishProbe(probeRunId, 'ineffective', 0, message, output);
       store.markCandidate(candidate.id, 'ineffective');
       return { candidate, status: 'ineffective', exitCode: 0, error: message };

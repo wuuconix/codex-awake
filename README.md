@@ -33,6 +33,7 @@ For one-off experiments, `run` and `probe-candidates` also accept `--probe-model
 - `codex exec` runs with an isolated temporary `CODEX_HOME`.
 - A hung `codex exec` is killed after `probeTimeoutMs` and recorded as a failed probe instead of blocking the run forever.
 - Probe subprocesses clear `OPENAI_API_KEY`/provider env vars, force ChatGPT auth in the temporary config, and store the Codex CLI output summary in `probe_runs.output`.
+- After a probe, quota verification waits `probeVerifyDelayMs` and retries `probeVerifyAttempts` times with `probeVerifyIntervalMs` between attempts before marking a probe as `ineffective`.
 
 ## Windows Task Scheduler
 
