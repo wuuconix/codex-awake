@@ -24,6 +24,7 @@ Quota refresh uses `proxyUrl` when configured, otherwise it falls back to `HTTPS
 - `show`: prints recent accounts, candidates, snapshots, and probe runs.
 
 All commands accept `--config <path>`. Commands that would wake accounts also accept `--dry-run` and `--limit-probes <n>`.
+For one-off experiments, `run` and `probe-candidates` also accept `--probe-model <model>` and `--probe-prompt <prompt>`.
 
 ## Safety Notes
 
@@ -46,4 +47,5 @@ For first rollout, use a small batch:
 ```powershell
 npm run start -- run --dry-run --limit-accounts 5
 npm run start -- run --limit-accounts 5 --limit-probes 1
+npm run start -- run --limit-probes 1 --probe-model gpt-5.5 --probe-prompt "Reply with exactly OK."
 ```

@@ -14,7 +14,7 @@ import type { AppConfig, AuthAccount, WakeCandidate } from './types.js';
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 type GlobalOptions = { config?: string };
-type ProbeOptions = { dryRun?: boolean; limitProbes?: string; limitAccounts?: string };
+type ProbeOptions = { dryRun?: boolean; limitProbes?: string; limitAccounts?: string; probeModel?: string; probePrompt?: string };
 
 function parseLimit(value?: string): number | undefined {
   if (value === undefined) return undefined;
@@ -112,9 +112,14 @@ async function runProbePhase(
   options: ProbeOptions
 ): Promise<void> {
   const limitProbes = parseLimit(options.limitProbes);
+  const probeConfig: AppConfig = {
+    ...config,
+    probeModel: options.probeModel?.trim() || config.probeModel,
+    probePrompt: options.probePrompt?.trim() || config.probePrompt
+  };
   const pending = store.listPendingCandidates(limitProbes ?? 1000);
   logger.info(
-    { count: pending.length, dryRun: Boolean(options.dryRun), command: buildProbeCommand(config) },
+    { count: pending.length, dryRun: Boolean(options.dryRun), command: buildProbeCommand(probeConfig) },
     'loaded pending wake candidates'
   );
   for (const candidate of pending) {
@@ -129,7 +134,7 @@ async function runProbePhase(
       options.dryRun ? 'would probe candidate' : 'probing candidate'
     );
   }
-  const results = await probeCandidates(pending, accounts, config, store, {
+  const results = await probeCandidates(pending, accounts, probeConfig, store, {
     dryRun: Boolean(options.dryRun),
     limitProbes
   });
@@ -206,6 +211,8 @@ program
   .description('probe stored pending candidates')
   .option('--dry-run', 'show candidates without running codex exec')
   .option('--limit-probes <n>', 'maximum number of probes to run')
+  .option('--probe-model <model>', 'override probe model for this run')
+  .option('--probe-prompt <prompt>', 'override probe prompt for this run')
   .action(async (options: ProbeOptions) => {
     const opts = program.opts<GlobalOptions>();
     await withStore(opts.config, async (config, store) => {
@@ -220,6 +227,8 @@ program
   .option('--dry-run', 'refresh quota and show candidates without saving candidates or running codex exec')
   .option('--limit-probes <n>', 'maximum number of probes to run')
   .option('--limit-accounts <n>', 'maximum number of accounts to refresh')
+  .option('--probe-model <model>', 'override probe model for this run')
+  .option('--probe-prompt <prompt>', 'override probe prompt for this run')
   .action(async (options: ProbeOptions) => {
     const opts = program.opts<GlobalOptions>();
     await withStore(opts.config, async (config, store) => {
