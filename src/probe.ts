@@ -47,8 +47,18 @@ function proxyEnv(config: AppConfig): NodeJS.ProcessEnv {
   };
 }
 
+function childPath(config: AppConfig): string {
+  const entries = [
+    path.dirname(process.execPath),
+    path.isAbsolute(config.codexBin) ? path.dirname(config.codexBin) : null,
+    process.env.PATH
+  ].filter((entry): entry is string => Boolean(entry && entry.length > 0));
+  return Array.from(new Set(entries)).join(path.delimiter);
+}
+
 function childEnv(config: AppConfig, codexHome: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, ...proxyEnv(config), CODEX_HOME: codexHome };
+  env.PATH = childPath(config);
   delete env.OPENAI_API_KEY;
   delete env.OPENAI_BASE_URL;
   delete env.OPENAI_ORG_ID;
