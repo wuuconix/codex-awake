@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/cli.js",
+    "show-quota-resets": "node dist/cli.js show-quota-resets",
     "dev": "tsx src/cli.ts",
     "test": "vitest run"
   },

@@ -6,7 +6,7 @@ import { execa } from 'execa';
 import pino from 'pino';
 import { loadAuthAccounts } from './auth.js';
 import { loadConfig } from './config.js';
-import { currentRunId, openStore } from './db.js';
+import { currentRunId, openStore, type LatestQuotaSnapshotRow } from './db.js';
 import { buildWakeCandidates, refreshQuotas } from './quota.js';
 import { buildProbeCommand, probeCandidates } from './probe.js';
 import type { AppConfig, AuthAccount, WakeCandidate } from './types.js';
@@ -28,6 +28,100 @@ function parseOptionalLimit(value: string | undefined, label: string): number | 
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${label} must be a non-negative integer`);
   return parsed;
+}
+
+function formatDateTime(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return '-';
+  return new Date(ms).toLocaleString('sv-SE', { hour12: false });
+}
+
+function formatDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return '-';
+  const sign = seconds < 0 ? '-' : '';
+  const total = Math.abs(Math.round(seconds));
+  const days = Math.floor(total / 86_400);
+  const hours = Math.floor((total % 86_400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (days > 0) return `${sign}${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${sign}${hours}h ${minutes}m`;
+  return `${sign}${minutes}m`;
+}
+
+type ResetWindow = {
+  scope?: string;
+  kind?: string;
+  resetAtMs?: number | null;
+  remainingSeconds?: number | null;
+  limitWindowSeconds?: number | null;
+  usedPercent?: number | null;
+};
+
+function parseWindows(windowsJson: string | null): ResetWindow[] {
+  if (!windowsJson) return [];
+  try {
+    const parsed = JSON.parse(windowsJson) as unknown;
+    return Array.isArray(parsed) ? (parsed.filter((item) => item && typeof item === 'object') as ResetWindow[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function pickDisplayWindow(row: LatestQuotaSnapshotRow): ResetWindow | null {
+  const windows = parseWindows(row.windowsJson);
+  return (
+    windows.find((item) => item.scope === 'rate_limit.primary_window') ??
+    windows.find((item) => item.kind === 'monthly') ??
+    windows.find((item) => item.kind === 'weekly') ??
+    windows[0] ??
+    null
+  );
+}
+
+function inferredResetAtMs(row: LatestQuotaSnapshotRow, window: ResetWindow | null): number | null {
+  if (!window) return null;
+  if (typeof window.resetAtMs === 'number' && Number.isFinite(window.resetAtMs)) return window.resetAtMs;
+  if (
+    typeof window.remainingSeconds === 'number' &&
+    Number.isFinite(window.remainingSeconds) &&
+    typeof row.observedAtMs === 'number' &&
+    Number.isFinite(row.observedAtMs)
+  ) {
+    return row.observedAtMs + window.remainingSeconds * 1000;
+  }
+  return null;
+}
+
+function showQuotaResets(store: ReturnType<typeof openStore>, limit?: number): void {
+  const rows = store
+    .listLatestQuotaSnapshots()
+    .map((row) => {
+      const window = pickDisplayWindow(row);
+      const resetAtMs = inferredResetAtMs(row, window);
+      return {
+        email: row.email ?? row.accountKey,
+        fileName: row.fileName,
+        plan: row.planType ?? '-',
+        ok: row.ok === null ? '-' : row.ok ? 'yes' : 'no',
+        window: window?.kind ?? '-',
+        scope: window?.scope ?? '-',
+        usedPercent: window?.usedPercent ?? '-',
+        remaining: formatDuration(window?.remainingSeconds),
+        resetAt: formatDateTime(resetAtMs),
+        refreshedAt: formatDateTime(row.createdAtMs),
+        error: row.error ? row.error.slice(0, 80) : '',
+        resetAtMs
+      };
+    })
+    .sort((a, b) => {
+      if (a.resetAtMs === null && b.resetAtMs === null) return a.email.localeCompare(b.email);
+      if (a.resetAtMs === null) return 1;
+      if (b.resetAtMs === null) return -1;
+      return a.resetAtMs - b.resetAtMs;
+    })
+    .slice(0, limit ?? undefined)
+    .map(({ resetAtMs: _resetAtMs, ...row }) => row);
+
+  console.table(rows);
 }
 
 async function withStore<T>(configPath: string | undefined, fn: (config: AppConfig, store: ReturnType<typeof openStore>) => Promise<T>): Promise<T> {
@@ -255,6 +349,17 @@ program
     const opts = program.opts<GlobalOptions>();
     await withStore(opts.config, async (_config, store) => {
       console.dir(store.showSummary(), { depth: 8, colors: true });
+    });
+  });
+
+program
+  .command('show-quota-resets')
+  .description('view latest quota reset time per account, sorted by earliest reset')
+  .option('--limit <n>', 'maximum number of accounts to show')
+  .action(async (options: { limit?: string }) => {
+    const opts = program.opts<GlobalOptions>();
+    await withStore(opts.config, async (_config, store) => {
+      showQuotaResets(store, parseOptionalLimit(options.limit, '--limit'));
     });
   });
 

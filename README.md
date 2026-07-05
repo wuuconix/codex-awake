@@ -10,6 +10,7 @@ npm run build
 npm run start -- doctor
 npm run start -- scan --dry-run
 npm run start -- run --limit-probes 1
+npm run show-quota-resets
 ```
 
 The default auth directory is `C:\Users\wuuconix\.cli-proxy-api`; override settings with `codex-awake.config.json`.
@@ -22,6 +23,7 @@ Quota refresh uses `proxyUrl` when configured, otherwise it falls back to `HTTPS
 - `probe-candidates`: probes stored pending candidates.
 - `run`: performs `scan` followed by `probe-candidates`.
 - `show`: prints recent accounts, candidates, snapshots, and probe runs.
+- `show-quota-resets`: prints each account's latest quota reset time, sorted earliest first.
 
 All commands accept `--config <path>`. Commands that would wake accounts also accept `--dry-run` and `--limit-probes <n>`.
 For one-off experiments, `run` and `probe-candidates` also accept `--probe-model <model>` and `--probe-prompt <prompt>`.

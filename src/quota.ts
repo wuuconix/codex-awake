@@ -1,5 +1,4 @@
 import type { AppConfig, AuthAccount, QuotaFetchResult, QuotaWindow, WakeCandidate } from './types.js';
-import { fetch as undiciFetch, ProxyAgent, type Response } from 'undici';
 import {
   MAX_MONTH_SECONDS,
   MIN_MONTH_SECONDS,
@@ -120,7 +119,7 @@ function compactUsageSummary(payload: unknown): unknown {
   };
 }
 
-function observedAtFromResponse(response: Response): number {
+function observedAtFromResponse(response: { headers: { get(name: string): string | null } }): number {
   const date = response.headers.get('date');
   if (!date) return Date.now();
   const parsed = Date.parse(date);
@@ -138,6 +137,7 @@ function errorMessage(error: unknown): string {
 }
 
 export async function fetchQuota(account: AuthAccount, config: AppConfig): Promise<QuotaFetchResult> {
+  const { fetch: undiciFetch, ProxyAgent } = await import('undici');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.quotaTimeoutMs);
   try {

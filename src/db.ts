@@ -27,6 +27,7 @@ export function openStore(dbPath: string) {
       finishProbe(db, id, status, exitCode, error, output),
     acquireLock: (name: string, ttlMs: number) => acquireLock(db, name, ttlMs),
     releaseLock: (name: string, owner: string) => releaseLock(db, name, owner),
+    listLatestQuotaSnapshots: () => listLatestQuotaSnapshots(db),
     showSummary: () => showSummary(db)
   };
 }
@@ -285,6 +286,49 @@ function acquireLock(db: Database.Database, name: string, ttlMs: number): string
 
 function releaseLock(db: Database.Database, name: string, owner: string): void {
   db.prepare(`delete from run_locks where name = ? and owner = ?`).run(name, owner);
+}
+
+export type LatestQuotaSnapshotRow = {
+  accountKey: string;
+  email: string | null;
+  fileName: string;
+  planType: string | null;
+  disabled: number;
+  statusCode: number | null;
+  ok: number | null;
+  observedAtMs: number | null;
+  createdAtMs: number | null;
+  windowsJson: string | null;
+  error: string | null;
+};
+
+function listLatestQuotaSnapshots(db: Database.Database): LatestQuotaSnapshotRow[] {
+  return db
+    .prepare(
+      `select
+        a.account_key as accountKey,
+        a.email,
+        a.file_name as fileName,
+        a.plan_type as planType,
+        a.disabled,
+        q.status_code as statusCode,
+        q.ok,
+        q.observed_at_ms as observedAtMs,
+        q.created_at_ms as createdAtMs,
+        q.windows_json as windowsJson,
+        q.error
+       from accounts a
+       left join (
+        select qs.*
+        from quota_snapshots qs
+        join (
+          select account_key, max(id) as id
+          from quota_snapshots
+          group by account_key
+        ) latest on latest.id = qs.id
+       ) q on q.account_key = a.account_key`
+    )
+    .all() as LatestQuotaSnapshotRow[];
 }
 
 function showSummary(db: Database.Database): unknown {
