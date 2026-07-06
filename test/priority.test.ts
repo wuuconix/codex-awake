@@ -68,7 +68,8 @@ describe('CPA priority assignment', () => {
       const accounts = await loadAuthAccounts(dir);
       const plan = buildCpaPriorityPlan(accounts, [
         snapshot('soon@example.com', 'codex-soon.json', observedAtMs + 60_000),
-        snapshot('later@example.com', 'codex-later.json', observedAtMs + 120_000)
+        snapshot('later@example.com', 'codex-later.json', observedAtMs + 120_000),
+        snapshot('deleted@example.com', 'codex-deleted.json', observedAtMs + 1)
       ]);
 
       expect(plan.map((item) => [item.account.email, item.priority, item.reason])).toEqual([

@@ -6,7 +6,7 @@ import { execa } from 'execa';
 import pino from 'pino';
 import { loadAuthAccounts } from './auth.js';
 import { loadConfig } from './config.js';
-import { currentRunId, openStore, type LatestQuotaSnapshotRow } from './db.js';
+import { currentRunId, openStore } from './db.js';
 import { applyCpaPriorityPlan, buildCpaPriorityPlan, inferredResetAtMs, pickDisplayWindow } from './priority.js';
 import { buildWakeCandidates, refreshQuotas } from './quota.js';
 import { buildProbeCommand, probeCandidates } from './probe.js';
@@ -18,7 +18,6 @@ type GlobalOptions = { config?: string };
 type ProbeOptions = { dryRun?: boolean; limitProbes?: string; limitAccounts?: string; probeModel?: string; probePrompt?: string };
 type PriorityOptions = {
   dryRun?: boolean;
-  refresh?: boolean;
   keepMissingResetPriority?: boolean;
   limitAccounts?: string;
 };
@@ -93,17 +92,10 @@ async function setCpaPriorities(
   options: PriorityOptions
 ): Promise<void> {
   const limitAccounts = parseOptionalLimit(options.limitAccounts, '--limit-accounts');
-  let accounts: AuthAccount[];
-
-  if (options.refresh) {
-    const result = await scan(config, store, false, limitAccounts);
-    accounts = result.accounts;
-  } else {
-    const loadedAccounts = await loadAuthAccounts(config.authDir);
-    accounts = limitAccounts === undefined ? loadedAccounts : loadedAccounts.slice(0, limitAccounts);
-    for (const account of accounts) {
-      store.upsertAccount(account);
-    }
+  const loadedAccounts = await loadAuthAccounts(config.authDir);
+  const accounts = limitAccounts === undefined ? loadedAccounts : loadedAccounts.slice(0, limitAccounts);
+  for (const account of accounts) {
+    store.upsertAccount(account);
   }
 
   const plan = buildCpaPriorityPlan(accounts, store.listLatestQuotaSnapshots(), {
@@ -113,7 +105,7 @@ async function setCpaPriorities(
   const knownResetCount = plan.filter((item) => item.reason === 'reset-known').length;
 
   if (enabledCount > 0 && knownResetCount === 0) {
-    throw new Error('no enabled accounts have quota reset metadata; run scan first or use --refresh');
+    throw new Error('no existing enabled auth files have quota reset metadata in SQLite; run scan separately first');
   }
 
   const results = await applyCpaPriorityPlan(plan, { dryRun: Boolean(options.dryRun) });
@@ -387,11 +379,10 @@ program
 
 program
   .command('set-cpa-priorities')
-  .description('set CPA Codex auth file priorities by nearest quota reset time')
+  .description('set CPA Codex auth file priorities from SQLite quota reset times')
   .option('--dry-run', 'show priority changes without writing auth files')
-  .option('--refresh', 'refresh quota metadata before setting priorities')
   .option('--keep-missing-reset-priority', 'leave enabled auth files without reset metadata unchanged')
-  .option('--limit-accounts <n>', 'maximum number of accounts to refresh or update')
+  .option('--limit-accounts <n>', 'maximum number of existing auth files to update')
   .action(async (options: PriorityOptions) => {
     const opts = program.opts<GlobalOptions>();
     await withStore(opts.config, async (config, store) => {
