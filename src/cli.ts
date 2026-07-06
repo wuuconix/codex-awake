@@ -7,6 +7,7 @@ import pino from 'pino';
 import { loadAuthAccounts } from './auth.js';
 import { loadConfig } from './config.js';
 import { currentRunId, openStore, type LatestQuotaSnapshotRow } from './db.js';
+import { applyCpaPriorityPlan, buildCpaPriorityPlan, inferredResetAtMs, pickDisplayWindow } from './priority.js';
 import { buildWakeCandidates, refreshQuotas } from './quota.js';
 import { buildProbeCommand, probeCandidates } from './probe.js';
 import type { AppConfig, AuthAccount, WakeCandidate } from './types.js';
@@ -15,6 +16,12 @@ const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 type GlobalOptions = { config?: string };
 type ProbeOptions = { dryRun?: boolean; limitProbes?: string; limitAccounts?: string; probeModel?: string; probePrompt?: string };
+type PriorityOptions = {
+  dryRun?: boolean;
+  refresh?: boolean;
+  keepMissingResetPriority?: boolean;
+  limitAccounts?: string;
+};
 
 function parseLimit(value?: string): number | undefined {
   if (value === undefined) return undefined;
@@ -45,50 +52,6 @@ function formatDuration(seconds: number | null | undefined): string {
   if (days > 0) return `${sign}${days}d ${hours}h ${minutes}m`;
   if (hours > 0) return `${sign}${hours}h ${minutes}m`;
   return `${sign}${minutes}m`;
-}
-
-type ResetWindow = {
-  scope?: string;
-  kind?: string;
-  resetAtMs?: number | null;
-  remainingSeconds?: number | null;
-  limitWindowSeconds?: number | null;
-  usedPercent?: number | null;
-};
-
-function parseWindows(windowsJson: string | null): ResetWindow[] {
-  if (!windowsJson) return [];
-  try {
-    const parsed = JSON.parse(windowsJson) as unknown;
-    return Array.isArray(parsed) ? (parsed.filter((item) => item && typeof item === 'object') as ResetWindow[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function pickDisplayWindow(row: LatestQuotaSnapshotRow): ResetWindow | null {
-  const windows = parseWindows(row.windowsJson);
-  return (
-    windows.find((item) => item.scope === 'rate_limit.primary_window') ??
-    windows.find((item) => item.kind === 'monthly') ??
-    windows.find((item) => item.kind === 'weekly') ??
-    windows[0] ??
-    null
-  );
-}
-
-function inferredResetAtMs(row: LatestQuotaSnapshotRow, window: ResetWindow | null): number | null {
-  if (!window) return null;
-  if (typeof window.resetAtMs === 'number' && Number.isFinite(window.resetAtMs)) return window.resetAtMs;
-  if (
-    typeof window.remainingSeconds === 'number' &&
-    Number.isFinite(window.remainingSeconds) &&
-    typeof row.observedAtMs === 'number' &&
-    Number.isFinite(row.observedAtMs)
-  ) {
-    return row.observedAtMs + window.remainingSeconds * 1000;
-  }
-  return null;
 }
 
 function showQuotaResets(store: ReturnType<typeof openStore>, limit?: number): void {
@@ -122,6 +85,65 @@ function showQuotaResets(store: ReturnType<typeof openStore>, limit?: number): v
     .map(({ resetAtMs: _resetAtMs, ...row }) => row);
 
   console.table(rows);
+}
+
+async function setCpaPriorities(
+  config: AppConfig,
+  store: ReturnType<typeof openStore>,
+  options: PriorityOptions
+): Promise<void> {
+  const limitAccounts = parseOptionalLimit(options.limitAccounts, '--limit-accounts');
+  let accounts: AuthAccount[];
+
+  if (options.refresh) {
+    const result = await scan(config, store, false, limitAccounts);
+    accounts = result.accounts;
+  } else {
+    const loadedAccounts = await loadAuthAccounts(config.authDir);
+    accounts = limitAccounts === undefined ? loadedAccounts : loadedAccounts.slice(0, limitAccounts);
+    for (const account of accounts) {
+      store.upsertAccount(account);
+    }
+  }
+
+  const plan = buildCpaPriorityPlan(accounts, store.listLatestQuotaSnapshots(), {
+    clearMissingReset: !options.keepMissingResetPriority
+  });
+  const enabledCount = accounts.filter((account) => !account.disabled).length;
+  const knownResetCount = plan.filter((item) => item.reason === 'reset-known').length;
+
+  if (enabledCount > 0 && knownResetCount === 0) {
+    throw new Error('no enabled accounts have quota reset metadata; run scan first or use --refresh');
+  }
+
+  const results = await applyCpaPriorityPlan(plan, { dryRun: Boolean(options.dryRun) });
+  console.table(
+    results.map((result) => ({
+      fileName: result.account.fileName,
+      email: result.account.email ?? result.account.accountKey,
+      priority: result.priority > 0 ? result.priority : 'default',
+      previous: result.previousPriority ?? '-',
+      resetAt: formatDateTime(result.resetAtMs),
+      action: result.skipped ? 'skipped' : result.changed ? (options.dryRun ? 'would update' : 'updated') : 'unchanged',
+      reason: result.reason,
+      error: result.error ?? ''
+    }))
+  );
+
+  const changed = results.filter((item) => item.changed && !item.skipped).length;
+  const skipped = results.filter((item) => item.skipped).length;
+  logger.info(
+    {
+      enabled: enabledCount,
+      knownReset: knownResetCount,
+      planned: plan.length,
+      changed,
+      skipped,
+      dryRun: Boolean(options.dryRun)
+    },
+    options.dryRun ? 'CPA priority dry run complete' : 'CPA priorities updated'
+  );
+  if (skipped > 0) process.exitCode = 1;
 }
 
 async function withStore<T>(configPath: string | undefined, fn: (config: AppConfig, store: ReturnType<typeof openStore>) => Promise<T>): Promise<T> {
@@ -360,6 +382,20 @@ program
     const opts = program.opts<GlobalOptions>();
     await withStore(opts.config, async (_config, store) => {
       showQuotaResets(store, parseOptionalLimit(options.limit, '--limit'));
+    });
+  });
+
+program
+  .command('set-cpa-priorities')
+  .description('set CPA Codex auth file priorities by nearest quota reset time')
+  .option('--dry-run', 'show priority changes without writing auth files')
+  .option('--refresh', 'refresh quota metadata before setting priorities')
+  .option('--keep-missing-reset-priority', 'leave enabled auth files without reset metadata unchanged')
+  .option('--limit-accounts <n>', 'maximum number of accounts to refresh or update')
+  .action(async (options: PriorityOptions) => {
+    const opts = program.opts<GlobalOptions>();
+    await withStore(opts.config, async (config, store) => {
+      await setCpaPriorities(config, store, options);
     });
   });
 
