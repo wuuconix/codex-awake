@@ -81,10 +81,13 @@ describe('CPA priority assignment', () => {
       const results = await applyCpaPriorityPlan(plan);
       expect(results.filter((item) => item.changed)).toHaveLength(3);
 
-      await expect(readJson(files.soon)).resolves.toMatchObject({ priority: 2 });
-      await expect(readJson(files.later)).resolves.toMatchObject({ priority: 1 });
-      expect(await readJson(files.missing)).not.toHaveProperty('priority');
+      await expect(readJson(files.soon)).resolves.toMatchObject({ priority: 2, websockets: true });
+      await expect(readJson(files.later)).resolves.toMatchObject({ priority: 1, websockets: true });
+      const missing = await readJson(files.missing);
+      expect(missing).not.toHaveProperty('priority');
+      expect(missing).toMatchObject({ websockets: true });
       await expect(readJson(files.disabled)).resolves.toMatchObject({ priority: 99, disabled: true });
+      expect(await readJson(files.disabled)).not.toHaveProperty('websockets');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

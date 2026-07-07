@@ -135,6 +135,10 @@ export async function applyCpaPriorityPlan(
         next.priority = item.priority;
         changed = true;
       }
+      if (next.websockets !== true) {
+        next.websockets = true;
+        changed = true;
+      }
 
       if (changed && !options.dryRun) {
         await writeJsonFile(item.account.filePath, next);
