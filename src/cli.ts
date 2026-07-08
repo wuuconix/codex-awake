@@ -98,13 +98,17 @@ async function setCpaPriorities(
     store.upsertAccount(account);
   }
 
-  const plan = buildCpaPriorityPlan(accounts, store.listLatestQuotaSnapshots(), {
+  const fullPlan = buildCpaPriorityPlan(accounts, store.listLatestQuotaSnapshots(), {
     clearMissingReset: !options.keepMissingResetPriority
   });
   const enabledCount = accounts.filter((account) => !account.disabled).length;
-  const knownResetCount = plan.filter((item) => item.reason === 'reset-known').length;
+  const knownResetCount = fullPlan.filter((item) => item.reason === 'reset-known').length;
+  const plan =
+    enabledCount > 0 && knownResetCount === 0
+      ? fullPlan.filter((item) => item.reason !== 'missing-reset')
+      : fullPlan;
 
-  if (enabledCount > 0 && knownResetCount === 0) {
+  if (enabledCount > 0 && knownResetCount === 0 && plan.length === 0) {
     throw new Error('no existing enabled auth files have quota reset metadata in SQLite; run scan separately first');
   }
 
@@ -115,6 +119,8 @@ async function setCpaPriorities(
       email: result.account.email ?? result.account.accountKey,
       priority: result.priority > 0 ? result.priority : 'default',
       previous: result.previousPriority ?? '-',
+      disabled: result.disabled ? 'yes' : 'no',
+      previousDisabled: result.previousDisabled ? 'yes' : 'no',
       resetAt: formatDateTime(result.resetAtMs),
       action: result.skipped ? 'skipped' : result.changed ? (options.dryRun ? 'would update' : 'updated') : 'unchanged',
       reason: result.reason,
@@ -128,6 +134,7 @@ async function setCpaPriorities(
     {
       enabled: enabledCount,
       knownReset: knownResetCount,
+      maintenanceOnly: fullPlan.length !== plan.length,
       planned: plan.length,
       changed,
       skipped,

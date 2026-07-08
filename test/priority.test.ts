@@ -12,7 +12,7 @@ async function readJson(filePath: string): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
 }
 
-function snapshot(accountKey: string, fileName: string, resetAtMs: number): LatestQuotaSnapshotRow {
+function snapshot(accountKey: string, fileName: string, resetAtMs: number, usedPercent = 50): LatestQuotaSnapshotRow {
   return {
     accountKey,
     email: accountKey,
@@ -30,7 +30,7 @@ function snapshot(accountKey: string, fileName: string, resetAtMs: number): Late
         resetAtMs,
         remainingSeconds: (resetAtMs - observedAtMs) / 1000,
         limitWindowSeconds: 604_800,
-        usedPercent: 50
+        usedPercent
       }
     ]),
     error: null
@@ -38,14 +38,16 @@ function snapshot(accountKey: string, fileName: string, resetAtMs: number): Late
 }
 
 describe('CPA priority assignment', () => {
-  it('sets higher priorities for nearer quota resets and skips disabled files', async () => {
+  it('sets priorities and syncs disabled state from quota availability', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'codex-awake-priority-test-'));
     try {
       const files = {
         soon: path.join(dir, 'codex-soon.json'),
         later: path.join(dir, 'codex-later.json'),
         missing: path.join(dir, 'codex-missing.json'),
-        disabled: path.join(dir, 'codex-disabled.json')
+        exhausted: path.join(dir, 'codex-exhausted.json'),
+        disabledAvailable: path.join(dir, 'codex-disabled-available.json'),
+        disabledCleanup: path.join(dir, 'codex-disabled-cleanup.json')
       };
 
       await writeFile(files.soon, JSON.stringify({ type: 'codex', email: 'soon@example.com', access_token: 'soon' }));
@@ -55,13 +57,27 @@ describe('CPA priority assignment', () => {
         JSON.stringify({ type: 'codex', email: 'missing@example.com', access_token: 'missing', priority: 9 })
       );
       await writeFile(
-        files.disabled,
+        files.exhausted,
+        JSON.stringify({ type: 'codex', email: 'exhausted@example.com', access_token: 'exhausted', priority: 99 })
+      );
+      await writeFile(
+        files.disabledAvailable,
         JSON.stringify({
           type: 'codex',
-          email: 'disabled@example.com',
-          access_token: 'disabled',
+          email: 'disabled-available@example.com',
+          access_token: 'disabled-available',
           disabled: true,
           priority: 99
+        })
+      );
+      await writeFile(
+        files.disabledCleanup,
+        JSON.stringify({
+          type: 'codex',
+          email: 'disabled-cleanup@example.com',
+          access_token: 'disabled-cleanup',
+          disabled: true,
+          priority: 88
         })
       );
 
@@ -69,25 +85,39 @@ describe('CPA priority assignment', () => {
       const plan = buildCpaPriorityPlan(accounts, [
         snapshot('soon@example.com', 'codex-soon.json', observedAtMs + 60_000),
         snapshot('later@example.com', 'codex-later.json', observedAtMs + 120_000),
+        snapshot('exhausted@example.com', 'codex-exhausted.json', observedAtMs + 180_000, 100),
+        snapshot('disabled-available@example.com', 'codex-disabled-available.json', observedAtMs + 90_000, 25),
         snapshot('deleted@example.com', 'codex-deleted.json', observedAtMs + 1)
       ]);
 
-      expect(plan.map((item) => [item.account.email, item.priority, item.reason])).toEqual([
-        ['soon@example.com', 2, 'reset-known'],
-        ['later@example.com', 1, 'reset-known'],
-        ['missing@example.com', 0, 'missing-reset']
+      expect(plan.map((item) => [item.account.email, item.priority, item.disabled, item.reason])).toEqual([
+        ['soon@example.com', 3, false, 'reset-known'],
+        ['disabled-available@example.com', 2, false, 'disabled-with-quota'],
+        ['later@example.com', 1, false, 'reset-known'],
+        ['missing@example.com', 0, false, 'missing-reset'],
+        ['disabled-cleanup@example.com', 0, true, 'disabled-cleanup'],
+        ['exhausted@example.com', 0, true, 'quota-exhausted']
       ]);
 
       const results = await applyCpaPriorityPlan(plan);
-      expect(results.filter((item) => item.changed)).toHaveLength(3);
+      expect(results.filter((item) => item.changed)).toHaveLength(6);
 
-      await expect(readJson(files.soon)).resolves.toMatchObject({ priority: 2, websockets: true });
+      await expect(readJson(files.soon)).resolves.toMatchObject({ priority: 3, websockets: true });
       await expect(readJson(files.later)).resolves.toMatchObject({ priority: 1, websockets: true });
       const missing = await readJson(files.missing);
       expect(missing).not.toHaveProperty('priority');
       expect(missing).toMatchObject({ websockets: true });
-      await expect(readJson(files.disabled)).resolves.toMatchObject({ priority: 99, disabled: true });
-      expect(await readJson(files.disabled)).not.toHaveProperty('websockets');
+      const exhausted = await readJson(files.exhausted);
+      expect(exhausted).toMatchObject({ disabled: true });
+      expect(exhausted).not.toHaveProperty('priority');
+      expect(exhausted).not.toHaveProperty('websockets');
+      const disabledAvailable = await readJson(files.disabledAvailable);
+      expect(disabledAvailable).toMatchObject({ priority: 2, websockets: true });
+      expect(disabledAvailable).not.toHaveProperty('disabled');
+      const disabledCleanup = await readJson(files.disabledCleanup);
+      expect(disabledCleanup).toMatchObject({ disabled: true });
+      expect(disabledCleanup).not.toHaveProperty('priority');
+      expect(disabledCleanup).not.toHaveProperty('websockets');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

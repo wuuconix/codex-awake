@@ -25,7 +25,7 @@ Quota refresh uses `proxyUrl` when configured, otherwise it falls back to `HTTPS
 - `run`: performs `scan` followed by `probe-candidates`.
 - `show`: prints recent accounts, candidates, snapshots, and probe runs.
 - `show-quota-resets`: prints each account's latest quota reset time, sorted earliest first.
-- `set-cpa-priorities`: sets existing enabled CPA Codex auth file priorities from SQLite quota reset times without refreshing quotas.
+- `set-cpa-priorities`: sets CPA Codex auth file priorities from SQLite quota reset times without refreshing quotas, disables files whose latest quota is exhausted, re-enables disabled files when quota is available, and removes priority fields from disabled files.
 
 All commands accept `--config <path>`. Commands that would wake accounts also accept `--dry-run` and `--limit-probes <n>`.
 For one-off experiments, `run` and `probe-candidates` also accept `--probe-model <model>` and `--probe-prompt <prompt>`.
