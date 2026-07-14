@@ -156,7 +156,10 @@ function showQuotaResets(store: ReturnType<typeof openStore>, limit?: number): v
       return {
         账号: row.email ?? row.accountKey,
         周期: window?.kind ?? '-',
-        已用: window?.usedPercent === null || window?.usedPercent === undefined ? '-' : `${window.usedPercent}%`,
+        剩余额度:
+          window?.usedPercent === null || window?.usedPercent === undefined
+            ? '-'
+            : `${Math.max(0, Math.min(100, 100 - window.usedPercent))}%`,
         距重置: formatDuration(window?.remainingSeconds),
         重置时间: formatDateTime(resetAtMs),
         resetAtMs
