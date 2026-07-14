@@ -154,22 +154,16 @@ function showQuotaResets(store: ReturnType<typeof openStore>, limit?: number): v
       const window = pickDisplayWindow(row);
       const resetAtMs = inferredResetAtMs(row, window);
       return {
-        email: row.email ?? row.accountKey,
-        fileName: row.fileName,
-        plan: row.planType ?? '-',
-        ok: row.ok === null ? '-' : row.ok ? 'yes' : 'no',
-        window: window?.kind ?? '-',
-        scope: window?.scope ?? '-',
-        usedPercent: window?.usedPercent ?? '-',
-        remaining: formatDuration(window?.remainingSeconds),
-        resetAt: formatDateTime(resetAtMs),
-        refreshedAt: formatDateTime(row.createdAtMs),
-        error: row.error ? row.error.slice(0, 80) : '',
+        账号: row.email ?? row.accountKey,
+        周期: window?.kind ?? '-',
+        已用: window?.usedPercent === null || window?.usedPercent === undefined ? '-' : `${window.usedPercent}%`,
+        距重置: formatDuration(window?.remainingSeconds),
+        重置时间: formatDateTime(resetAtMs),
         resetAtMs
       };
     })
     .sort((a, b) => {
-      if (a.resetAtMs === null && b.resetAtMs === null) return a.email.localeCompare(b.email);
+      if (a.resetAtMs === null && b.resetAtMs === null) return a.账号.localeCompare(b.账号);
       if (a.resetAtMs === null) return 1;
       if (b.resetAtMs === null) return -1;
       return a.resetAtMs - b.resetAtMs;
