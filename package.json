@@ -8,12 +8,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "doctor": "npm run build && node dist/cli.js doctor",
-    "refresh-quotas": "npm run build && node dist/cli.js refresh-quotas",
-    "wake": "npm run build && node dist/cli.js wake",
-    "show": "npm run build && node dist/cli.js show",
+    "doctor": "node dist/cli.js doctor",
+    "refresh-quotas": "node dist/cli.js refresh-quotas",
+    "wake": "node dist/cli.js wake",
+    "show": "node dist/cli.js show",
     "show-quota-resets": "node dist/cli.js show-quota-resets",
-    "set-cpa-priorities": "npm run build && node dist/cli.js set-cpa-priorities",
+    "set-cpa-priorities": "node dist/cli.js set-cpa-priorities",
     "dev": "tsx src/cli.ts",
     "test": "vitest run"
   },
