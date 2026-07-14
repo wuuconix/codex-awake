@@ -44,6 +44,11 @@ describe('sqlite and probe queue', () => {
       store.replaceCandidates('run-test', [candidate]);
       const pending = store.listPendingCandidates();
       expect(pending).toHaveLength(1);
+      const summary = store.showSummary();
+      expect(summary.accounts).toMatchObject({ total: 1, enabled: 1, disabled: 0 });
+      expect(summary.latestWakeBatch).toMatchObject({ runId: 'run-test', total: 1, pending: 1 });
+      expect(summary.activeCandidates).toHaveLength(1);
+      expect(summary.activeCandidates[0]).toMatchObject({ email: 'a@example.com', status: 'pending' });
       const config: AppConfig = {
         authDir: dir,
         dbPath: path.join(dir, 'test.sqlite'),

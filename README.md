@@ -7,9 +7,10 @@ Small TypeScript CLI that scans CPA Codex auth files, refreshes quota metadata f
 ```powershell
 npm install
 npm run build
-npm run start -- doctor
+npm run doctor
 npm run refresh-quotas
 npm run wake -- --limit-probes 1
+npm run show
 npm run show-quota-resets
 npm run set-cpa-priorities
 ```
@@ -19,11 +20,11 @@ Quota refresh uses `proxyUrl` when configured, otherwise it falls back to `HTTPS
 
 ## Commands
 
-- `doctor`: checks auth directory, SQLite setup, Codex CLI, and endpoint reachability.
-- `refresh-quotas`: refreshes quota metadata and stores the latest results in SQLite. It does not create or run wake candidates.
-- `wake`: uses the latest stored quota result for each current auth file to select wake candidates, stores that queue, then probes it. It does not refresh quota before selecting candidates.
+- `npm run doctor`: checks auth directory, SQLite setup, Codex CLI, and endpoint reachability.
+- `npm run refresh-quotas`: refreshes quota metadata and stores the latest results in SQLite. It does not create or run wake candidates.
+- `npm run wake`: uses the latest stored quota result for each current auth file to select wake candidates, stores that queue, then probes it. It does not refresh quota before selecting candidates.
+- `npm run show`: displays a concise account/quota overview, active wake queue, recent probe results, and recent quota refresh failures. Use `npm run show -- --limit 20` to expand the detail tables.
 - `probe-candidates`: probes stored pending candidates.
-- `show`: prints recent accounts, candidates, snapshots, and probe runs.
 - `show-quota-resets`: prints each account's latest quota reset time, sorted earliest first.
 - `set-cpa-priorities`: sets CPA Codex auth file priorities from SQLite quota reset times without refreshing quotas, disables files whose latest quota is exhausted, re-enables disabled files when quota is available, and removes priority fields from disabled files.
 

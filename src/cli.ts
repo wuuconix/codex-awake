@@ -7,6 +7,7 @@ import pino from 'pino';
 import { loadAuthAccounts } from './auth.js';
 import { loadConfig } from './config.js';
 import { currentRunId, openStore } from './db.js';
+import type { ShowSummary } from './db.js';
 import { applyCpaPriorityPlan, buildCpaPriorityPlan, inferredResetAtMs, pickDisplayWindow } from './priority.js';
 import { buildWakeCandidatesFromSnapshot, refreshQuotas } from './quota.js';
 import { buildProbeCommand, probeCandidates } from './probe.js';
@@ -51,6 +52,99 @@ function formatDuration(seconds: number | null | undefined): string {
   if (days > 0) return `${sign}${days}d ${hours}h ${minutes}m`;
   if (hours > 0) return `${sign}${hours}h ${minutes}m`;
   return `${sign}${minutes}m`;
+}
+
+function compactText(value: string | null | undefined, maxLength = 100): string {
+  if (!value) return '-';
+  const singleLine = value.replace(/\s+/g, ' ').trim();
+  return singleLine.length > maxLength ? `${singleLine.slice(0, maxLength - 1)}…` : singleLine;
+}
+
+function probeDetail(error: string | null, output: string | null): string {
+  if (error) return compactText(error);
+  if (!output) return '-';
+  const lastMessage = /^last_message=(.+)$/m.exec(output)?.[1];
+  const stdout = /^stdout=(.+)$/m.exec(output)?.[1];
+  return compactText(lastMessage ?? stdout ?? output);
+}
+
+function showSummary(summary: ShowSummary): void {
+  console.log('\n账户与额度');
+  console.table([
+    {
+      accounts: summary.accounts.total,
+      enabled: summary.accounts.enabled,
+      disabled: summary.accounts.disabled,
+      refreshed: summary.quota.refreshed,
+      quotaOk: summary.quota.successful,
+      quotaFailed: summary.quota.failed,
+      quotaMissing: summary.quota.missing,
+      latestRefresh: formatDateTime(summary.quota.latestRefreshedAtMs)
+    }
+  ]);
+
+  console.log('\n最近唤醒批次');
+  console.table([
+    {
+      created: formatDateTime(summary.latestWakeBatch.createdAtMs),
+      selected: summary.latestWakeBatch.total,
+      pending: summary.latestWakeBatch.pending,
+      probing: summary.latestWakeBatch.probing,
+      success: summary.latestWakeBatch.probed,
+      failed: summary.latestWakeBatch.failed,
+      ineffective: summary.latestWakeBatch.ineffective,
+      skipped: summary.latestWakeBatch.skipped
+    }
+  ]);
+
+  console.log('\n待处理唤醒账号');
+  if (summary.activeCandidates.length === 0) {
+    console.log('无待处理账号。');
+  } else {
+    console.table(
+      summary.activeCandidates.map((candidate) => ({
+        id: candidate.id,
+        email: candidate.email ?? candidate.fileName,
+        window: candidate.windowKind,
+        scope: candidate.windowScope,
+        remaining: formatDuration(candidate.remainingSeconds),
+        status: candidate.status,
+        selectedAt: formatDateTime(candidate.createdAtMs)
+      }))
+    );
+  }
+
+  console.log('\n最近唤醒执行');
+  if (summary.recentProbes.length === 0) {
+    console.log('暂无唤醒执行记录。');
+  } else {
+    const now = Date.now();
+    console.table(
+      summary.recentProbes.map((probe) => ({
+        id: probe.id,
+        email: probe.email ?? probe.fileName,
+        status: probe.status,
+        started: formatDateTime(probe.startedAtMs),
+        duration: formatDuration(((probe.finishedAtMs ?? now) - probe.startedAtMs) / 1000),
+        exitCode: probe.exitCode ?? '-',
+        detail: probeDetail(probe.error, probe.output)
+      }))
+    );
+  }
+
+  console.log('\n最新额度刷新失败');
+  if (summary.quotaErrors.length === 0) {
+    console.log('无失败记录。');
+  } else {
+    console.table(
+      summary.quotaErrors.map((snapshot) => ({
+        email: snapshot.email ?? snapshot.fileName,
+        statusCode: snapshot.statusCode ?? '-',
+        refreshed: formatDateTime(snapshot.createdAtMs),
+        error: compactText(snapshot.error)
+      }))
+    );
+  }
 }
 
 function showQuotaResets(store: ReturnType<typeof openStore>, limit?: number): void {
@@ -376,11 +470,12 @@ program
 
 program
   .command('show')
-  .description('show recent accounts, candidates, snapshots, and probe runs')
-  .action(async () => {
+  .description('show account, quota, wake queue, and recent probe status in tables')
+  .option('--limit <n>', 'maximum rows to show in each detail table')
+  .action(async (options: { limit?: string }) => {
     const opts = program.opts<GlobalOptions>();
     await withStore(opts.config, async (_config, store) => {
-      console.dir(store.showSummary(), { depth: 8, colors: true });
+      showSummary(store.showSummary(parseOptionalLimit(options.limit, '--limit')));
     });
   });
 

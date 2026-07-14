@@ -28,7 +28,7 @@ export function openStore(dbPath: string) {
     acquireLock: (name: string, ttlMs: number) => acquireLock(db, name, ttlMs),
     releaseLock: (name: string, owner: string) => releaseLock(db, name, owner),
     listLatestQuotaSnapshots: () => listLatestQuotaSnapshots(db),
-    showSummary: () => showSummary(db)
+    showSummary: (limit?: number) => showSummary(db, limit)
   };
 }
 
@@ -325,36 +325,122 @@ function listLatestQuotaSnapshots(db: Database.Database): LatestQuotaSnapshotRow
     .all() as LatestQuotaSnapshotRow[];
 }
 
-function showSummary(db: Database.Database): unknown {
+export type ShowSummary = {
+  accounts: { total: number; enabled: number; disabled: number };
+  quota: { refreshed: number; successful: number; failed: number; missing: number; latestRefreshedAtMs: number | null };
+  latestWakeBatch: {
+    runId: string | null;
+    createdAtMs: number | null;
+    total: number;
+    pending: number;
+    probing: number;
+    probed: number;
+    failed: number;
+    ineffective: number;
+    skipped: number;
+  };
+  activeCandidates: Array<{
+    id: number;
+    email: string | null;
+    fileName: string;
+    windowKind: string;
+    windowScope: string;
+    remainingSeconds: number | null;
+    status: string;
+    createdAtMs: number;
+  }>;
+  recentProbes: Array<{
+    id: number;
+    email: string | null;
+    fileName: string;
+    status: string;
+    startedAtMs: number;
+    finishedAtMs: number | null;
+    exitCode: number | null;
+    error: string | null;
+    output: string | null;
+  }>;
+  quotaErrors: Array<{
+    email: string | null;
+    fileName: string;
+    statusCode: number | null;
+    createdAtMs: number | null;
+    error: string | null;
+  }>;
+};
+
+function showSummary(db: Database.Database, limit = 10): ShowSummary {
+  const rowLimit = Math.max(1, Math.min(limit, 100));
+  const snapshots = listLatestQuotaSnapshots(db);
+  const accountCounts = db
+    .prepare(
+      `select count(*) as total,
+        sum(case when disabled = 0 then 1 else 0 end) as enabled,
+        sum(case when disabled = 1 then 1 else 0 end) as disabled
+       from accounts`
+    )
+    .get() as { total: number; enabled: number | null; disabled: number | null };
+  const refreshed = snapshots.filter((row) => row.createdAtMs !== null);
+  const successful = refreshed.filter((row) => row.ok === 1).length;
+  const latestRefreshedAtMs = refreshed.reduce<number | null>(
+    (latest, row) => (row.createdAtMs !== null && (latest === null || row.createdAtMs > latest) ? row.createdAtMs : latest),
+    null
+  );
+
+  const latestBatch = db
+    .prepare(`select run_id as runId, max(created_at_ms) as createdAtMs from wake_candidates group by run_id order by createdAtMs desc limit 1`)
+    .get() as { runId: string; createdAtMs: number } | undefined;
+  const batchCounts = latestBatch
+    ? (db
+        .prepare(
+          `select count(*) as total,
+            sum(case when status = 'pending' then 1 else 0 end) as pending,
+            sum(case when status = 'probing' then 1 else 0 end) as probing,
+            sum(case when status = 'probed' then 1 else 0 end) as probed,
+            sum(case when status = 'failed' then 1 else 0 end) as failed,
+            sum(case when status = 'ineffective' then 1 else 0 end) as ineffective,
+            sum(case when status in ('missing-auth', 'recently-probed', 'superseded') then 1 else 0 end) as skipped
+           from wake_candidates where run_id = ?`
+        )
+        .get(latestBatch.runId) as Omit<ShowSummary['latestWakeBatch'], 'runId' | 'createdAtMs'>)
+    : { total: 0, pending: 0, probing: 0, probed: 0, failed: 0, ineffective: 0, skipped: 0 };
+
   return {
-    accounts: db.prepare(`select count(*) as count from accounts`).get(),
-    pendingCandidates: db.prepare(`select count(*) as count from wake_candidates where status = 'pending'`).get(),
-    recentCandidates: db
+    accounts: { total: accountCounts.total, enabled: accountCounts.enabled ?? 0, disabled: accountCounts.disabled ?? 0 },
+    quota: {
+      refreshed: refreshed.length,
+      successful,
+      failed: refreshed.length - successful,
+      missing: snapshots.length - refreshed.length,
+      latestRefreshedAtMs
+    },
+    latestWakeBatch: { runId: latestBatch?.runId ?? null, createdAtMs: latestBatch?.createdAtMs ?? null, ...batchCounts },
+    activeCandidates: db
       .prepare(
-        `select id, file_name as fileName, email, account_id as accountId, window_kind as windowKind,
-          window_scope as windowScope, remaining_seconds as remainingSeconds, status, created_at_ms as createdAtMs
-         from wake_candidates
-         order by created_at_ms desc
-         limit 20`
+        `select id, email, file_name as fileName, window_kind as windowKind, window_scope as windowScope,
+          remaining_seconds as remainingSeconds, status, created_at_ms as createdAtMs
+         from wake_candidates where status in ('pending', 'probing')
+         order by created_at_ms asc limit ?`
       )
-      .all(),
+      .all(rowLimit) as ShowSummary['activeCandidates'],
     recentProbes: db
       .prepare(
-        `select id, file_name as fileName, status, started_at_ms as startedAtMs, finished_at_ms as finishedAtMs,
-          exit_code as exitCode, error, output
-         from probe_runs
-         order by started_at_ms desc
-         limit 20`
+        `select p.id, a.email, p.file_name as fileName, p.status, p.started_at_ms as startedAtMs,
+          p.finished_at_ms as finishedAtMs, p.exit_code as exitCode, p.error, p.output
+         from probe_runs p left join accounts a on a.account_key = p.account_key
+         order by p.started_at_ms desc limit ?`
       )
-      .all(),
-    recentSnapshots: db
-      .prepare(
-        `select account_key as accountKey, status_code as statusCode, ok, plan_type as planType,
-          created_at_ms as createdAtMs, error
-         from quota_snapshots
-         order by created_at_ms desc
-         limit 20`
-      )
-      .all()
+      .all(rowLimit) as ShowSummary['recentProbes'],
+    quotaErrors: snapshots
+      .filter((row) => row.createdAtMs !== null && row.ok !== 1)
+      .sort((a, b) => (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0))
+      .slice(0, rowLimit)
+      .map((row) => ({
+        email: row.email,
+        fileName: row.fileName,
+        statusCode: row.statusCode,
+        createdAtMs: row.createdAtMs,
+        error: row.error
+      }))
   };
 }
