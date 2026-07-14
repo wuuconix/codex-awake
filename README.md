@@ -1,59 +1,86 @@
 # codex-awake
 
-Small TypeScript CLI that scans CPA Codex auth files, refreshes quota metadata from ChatGPT's Codex usage endpoint, stores observations in SQLite, and wakes likely dormant accounts through the official `codex exec` CLI.
+`codex-awake` 用于管理 CPA Codex 账号：刷新账号额度、从已保存的额度结果中挑选疑似休眠账号，并通过官方 `codex exec` 执行一次轻量探测来唤醒账号。
 
-## Quick Start
+额度刷新与唤醒是两个独立步骤。唤醒不会重复调用额度接口，而是只使用上一次保存到 SQLite 的额度快照。
 
-```powershell
+## 快速开始
+
+```bash
 npm install
+cp codex-awake.config.example.json codex-awake.config.json
+# 按实际环境修改 codex-awake.config.json 中的目录和 codexBin
 npm run build
 npm run doctor
-npm run refresh-quotas
-npm run wake -- --limit-probes 1
-npm run show
-npm run show-quota-resets
-npm run set-cpa-priorities
 ```
 
-The default auth directory is `C:\Users\wuuconix\.cli-proxy-api`; override settings with `codex-awake.config.json`.
-Quota refresh uses `proxyUrl` when configured, otherwise it falls back to `HTTPS_PROXY`, `HTTP_PROXY`, or `ALL_PROXY`.
+示例配置默认面向 Linux 服务器，使用：
 
-## Commands
+- CPA 认证目录：`/root/.cli-proxy-api`
+- Codex 可执行文件：`/root/.local/bin/codex`
+- SQLite 数据库：`data/codex-awake.sqlite`
+- 额度刷新并发：2；每轮请求间隔：10 秒
+- 探测最小间隔：2 分钟；同一账号探测冷却时间：24 小时
 
-- `npm run doctor`: checks auth directory, SQLite setup, Codex CLI, and endpoint reachability.
-- `npm run refresh-quotas`: refreshes quota metadata and stores the latest results in SQLite. It does not create or run wake candidates.
-- `npm run wake`: uses the latest stored quota result for each current auth file to select wake candidates, stores that queue, then probes it. It does not refresh quota before selecting candidates.
-- `npm run show`: displays a concise account/quota overview, active wake queue, recent probe results, and recent quota refresh failures. Use `npm run show -- --limit 20` to expand the detail tables.
-- `probe-candidates`: probes stored pending candidates.
-- `show-quota-resets`: prints each account's latest quota reset time, sorted earliest first.
-- `set-cpa-priorities`: sets CPA Codex auth file priorities from SQLite quota reset times without refreshing quotas, disables files whose latest quota is exhausted, re-enables disabled files when quota is available, and removes priority fields from disabled files.
+完整的默认演示配置见 [codex-awake.config.example.json](codex-awake.config.example.json)。`proxyUrl` 为空字符串时不设置代理；如需代理，请填写完整的代理地址。
 
-All CLI commands accept `--config <path>`. `wake` and `probe-candidates` also accept `--dry-run` and `--limit-probes <n>`.
-For one-off experiments, `wake` and `probe-candidates` also accept `--probe-model <model>` and `--probe-prompt <prompt>`.
+## 日常使用
 
-## Safety Notes
+先刷新全部账号的额度：
 
-- Access tokens are read from CPA auth files but are not logged or stored in SQLite.
-- Probe execution is serialized globally and waits at least `probeMinIntervalMs` between starts.
-- `codex exec` runs with an isolated temporary `CODEX_HOME` under `codexHomeParentDir` instead of the system temp directory.
-- A hung `codex exec` is killed after `probeTimeoutMs` and recorded as a failed probe instead of blocking the run forever.
-- Probe subprocesses clear `OPENAI_API_KEY`/provider env vars, force ChatGPT auth in the temporary config, and store the Codex CLI output summary in `probe_runs.output`.
-- After a probe, quota verification waits `probeVerifyDelayMs` and retries `probeVerifyAttempts` times with `probeVerifyIntervalMs` between attempts. It uses `probeVerifyToleranceSeconds` to decide whether a reset window is still effectively full.
-
-## Windows Task Scheduler
-
-Schedule these two commands independently from the project directory. Run the refresh first; the wake task will only use the data written by its latest successful refresh.
-
-```powershell
+```bash
 npm run refresh-quotas
+```
+
+刷新完成后，再根据保存的最新额度快照挑选并唤醒账号：
+
+```bash
 npm run wake
 ```
 
-For first rollout, use a small batch:
+查看当前状态：
 
-```powershell
-npm run refresh-quotas -- --dry-run --limit-accounts 5
-npm run refresh-quotas -- --limit-accounts 5
-npm run wake -- --dry-run --limit-probes 1
-npm run wake -- --limit-probes 1 --probe-model gpt-5.5 --probe-prompt "Reply with exactly OK."
+```bash
+npm run show
+npm run show-quota-resets
 ```
+
+`show` 展示账户与额度总览、当前待处理队列、最近唤醒结果和最新额度刷新失败；`show-quota-resets` 按最早重置时间列出账号的周期、剩余额度和重置时间。
+
+## 命令说明
+
+| 命令 | 作用 |
+| --- | --- |
+| `npm run doctor` | 检查认证目录、SQLite 数据库和 Codex CLI 是否可用。 |
+| `npm run refresh-quotas` | 刷新启用账号的额度，并将结果保存到 SQLite。不会创建或执行唤醒任务。 |
+| `npm run wake` | 读取最新保存的额度快照，生成候选队列并执行唤醒。不会再次刷新额度。 |
+| `npm run show` | 用简洁表格查看运行状态；可通过 `npm run show -- --limit 20` 扩大明细行数。 |
+| `npm run show-quota-resets` | 按额度重置时间查看账号。 |
+| `npm run set-cpa-priorities` | 按 SQLite 中的额度重置时间设置 CPA 认证文件优先级；额度耗尽的账号会被禁用，可用时会重新启用。 |
+
+所有 CLI 命令都可以加 `--config <路径>` 使用另一份配置，例如：
+
+```bash
+node dist/cli.js --config /root/codex-awake/config.json show
+```
+
+## 配置说明
+
+配置文件为 `codex-awake.config.json`。以下字段通常需要按部署环境确认：
+
+| 字段 | 说明 |
+| --- | --- |
+| `authDir` | CPA Codex 认证文件目录。 |
+| `dbPath` | SQLite 数据库路径。 |
+| `proxyUrl` | 可选 HTTP/HTTPS 代理地址；留空表示不显式设置代理。 |
+| `codexBin` | `codex` 可执行文件路径。 |
+| `quotaConcurrency` / `quotaDelayMs` | 额度接口的并发数与请求间隔。 |
+| `probeMinIntervalMs` / `probeCooldownMs` | 全局探测间隔与同账号冷却时间。 |
+| `probeModel` / `probePrompt` | 唤醒探测使用的模型和提示词。 |
+
+## 安全与行为
+
+- 认证 token 只从 CPA 认证文件读取，不会写入 SQLite 或日志。
+- 探测在临时、隔离的 `CODEX_HOME` 中运行，不会使用系统默认 Codex 登录状态。
+- 探测任务全局串行，进程超时会被终止并记录为失败。
+- 每次探测完成后会再次验证额度；若额度窗口仍保持满额，任务会被标记为无效，而非成功。
