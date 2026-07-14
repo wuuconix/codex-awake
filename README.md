@@ -8,8 +8,8 @@ Small TypeScript CLI that scans CPA Codex auth files, refreshes quota metadata f
 npm install
 npm run build
 npm run start -- doctor
-npm run start -- scan --dry-run
-npm run start -- run --limit-probes 1
+npm run refresh-quotas
+npm run wake -- --limit-probes 1
 npm run show-quota-resets
 npm run set-cpa-priorities
 ```
@@ -20,15 +20,15 @@ Quota refresh uses `proxyUrl` when configured, otherwise it falls back to `HTTPS
 ## Commands
 
 - `doctor`: checks auth directory, SQLite setup, Codex CLI, and endpoint reachability.
-- `scan`: refreshes quota metadata and stores wake candidates without probing.
+- `refresh-quotas`: refreshes quota metadata and stores the latest results in SQLite. It does not create or run wake candidates.
+- `wake`: uses the latest stored quota result for each current auth file to select wake candidates, stores that queue, then probes it. It does not refresh quota before selecting candidates.
 - `probe-candidates`: probes stored pending candidates.
-- `run`: performs `scan` followed by `probe-candidates`.
 - `show`: prints recent accounts, candidates, snapshots, and probe runs.
 - `show-quota-resets`: prints each account's latest quota reset time, sorted earliest first.
 - `set-cpa-priorities`: sets CPA Codex auth file priorities from SQLite quota reset times without refreshing quotas, disables files whose latest quota is exhausted, re-enables disabled files when quota is available, and removes priority fields from disabled files.
 
-All commands accept `--config <path>`. Commands that would wake accounts also accept `--dry-run` and `--limit-probes <n>`.
-For one-off experiments, `run` and `probe-candidates` also accept `--probe-model <model>` and `--probe-prompt <prompt>`.
+All CLI commands accept `--config <path>`. `wake` and `probe-candidates` also accept `--dry-run` and `--limit-probes <n>`.
+For one-off experiments, `wake` and `probe-candidates` also accept `--probe-model <model>` and `--probe-prompt <prompt>`.
 
 ## Safety Notes
 
@@ -41,16 +41,18 @@ For one-off experiments, `run` and `probe-candidates` also accept `--probe-model
 
 ## Windows Task Scheduler
 
-After `npm install` and `npm run build`, schedule this command from the project directory:
+Schedule these two commands independently from the project directory. Run the refresh first; the wake task will only use the data written by its latest successful refresh.
 
 ```powershell
-npm run start -- run
+npm run refresh-quotas
+npm run wake
 ```
 
 For first rollout, use a small batch:
 
 ```powershell
-npm run start -- run --dry-run --limit-accounts 5
-npm run start -- run --limit-accounts 5 --limit-probes 1
-npm run start -- run --limit-probes 1 --probe-model gpt-5.5 --probe-prompt "Reply with exactly OK."
+npm run refresh-quotas -- --dry-run --limit-accounts 5
+npm run refresh-quotas -- --limit-accounts 5
+npm run wake -- --dry-run --limit-probes 1
+npm run wake -- --limit-probes 1 --probe-model gpt-5.5 --probe-prompt "Reply with exactly OK."
 ```

@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import type { AuthAccount, QuotaFetchResult, WakeCandidate } from './types.js';
+import type { AuthAccount, QuotaFetchResult, QuotaSnapshot, WakeCandidate } from './types.js';
 
 export type Store = ReturnType<typeof openStore>;
 
@@ -288,18 +288,12 @@ function releaseLock(db: Database.Database, name: string, owner: string): void {
   db.prepare(`delete from run_locks where name = ? and owner = ?`).run(name, owner);
 }
 
-export type LatestQuotaSnapshotRow = {
+export type LatestQuotaSnapshotRow = QuotaSnapshot & {
   accountKey: string;
   email: string | null;
   fileName: string;
   planType: string | null;
   disabled: number;
-  statusCode: number | null;
-  ok: number | null;
-  observedAtMs: number | null;
-  createdAtMs: number | null;
-  windowsJson: string | null;
-  error: string | null;
 };
 
 function listLatestQuotaSnapshots(db: Database.Database): LatestQuotaSnapshotRow[] {

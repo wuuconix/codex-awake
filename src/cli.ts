@@ -8,7 +8,7 @@ import { loadAuthAccounts } from './auth.js';
 import { loadConfig } from './config.js';
 import { currentRunId, openStore } from './db.js';
 import { applyCpaPriorityPlan, buildCpaPriorityPlan, inferredResetAtMs, pickDisplayWindow } from './priority.js';
-import { buildWakeCandidates, refreshQuotas } from './quota.js';
+import { buildWakeCandidatesFromSnapshot, refreshQuotas } from './quota.js';
 import { buildProbeCommand, probeCandidates } from './probe.js';
 import type { AppConfig, AuthAccount, WakeCandidate } from './types.js';
 
@@ -155,18 +155,14 @@ async function withStore<T>(configPath: string | undefined, fn: (config: AppConf
   }
 }
 
-async function scan(
+async function refreshQuotaSnapshots(
   config: AppConfig,
   store: ReturnType<typeof openStore>,
   dryRun: boolean,
   limitAccounts?: number
-): Promise<{
-  accounts: AuthAccount[];
-  candidates: WakeCandidate[];
-}> {
+): Promise<AuthAccount[]> {
   const loadedAccounts = await loadAuthAccounts(config.authDir);
   const accounts = limitAccounts === undefined ? loadedAccounts : loadedAccounts.slice(0, limitAccounts);
-  const candidates: WakeCandidate[] = [];
   logger.info({ selected: accounts.length, total: loadedAccounts.length }, 'loaded codex auth accounts');
 
   if (!dryRun) {
@@ -180,25 +176,45 @@ async function scan(
       store.upsertAccount(result.account, result.planType);
       store.insertQuotaSnapshot(result);
     }
-    const recent = store.hasRecentSuccessfulProbe(result.account.accountKey, config.probeCooldownMs);
-    const nextCandidates = buildWakeCandidates(
-      result,
-      config.dormantToleranceSeconds,
-      config.dormantMaxUsedPercent,
-      recent
-    );
-    candidates.push(...nextCandidates);
     logger.info(
       {
         fileName: result.account.fileName,
         ok: result.ok,
         statusCode: result.statusCode,
         windows: result.windows.length,
-        candidates: nextCandidates.length,
         error: result.error
       },
       dryRun ? 'quota refreshed (dry run)' : 'quota refreshed'
     );
+  });
+  return accounts;
+}
+
+function selectWakeCandidates(
+  config: AppConfig,
+  store: ReturnType<typeof openStore>,
+  accounts: AuthAccount[],
+  dryRun: boolean
+): WakeCandidate[] {
+  const snapshots = new Map(store.listLatestQuotaSnapshots().map((snapshot) => [snapshot.accountKey, snapshot]));
+  const candidates: WakeCandidate[] = [];
+  let missingSnapshots = 0;
+
+  for (const account of accounts) {
+    const snapshot = snapshots.get(account.accountKey);
+    if (!snapshot) {
+      missingSnapshots += 1;
+      continue;
+    }
+    const recent = store.hasRecentSuccessfulProbe(account.accountKey, config.probeCooldownMs);
+    const nextCandidates = buildWakeCandidatesFromSnapshot(
+      account,
+      snapshot,
+      config.dormantToleranceSeconds,
+      config.dormantMaxUsedPercent,
+      recent
+    );
+    candidates.push(...nextCandidates);
     for (const candidate of nextCandidates) {
       logger.info(
         {
@@ -209,15 +225,17 @@ async function scan(
           remainingSeconds: candidate.remainingSeconds,
           reason: candidate.reason
         },
-        dryRun ? 'would create wake candidate' : 'created wake candidate'
+        dryRun ? 'would create wake candidate from stored quota snapshot' : 'created wake candidate from stored quota snapshot'
       );
     }
-  });
-
-  if (!dryRun) {
-    store.replaceCandidates(currentRunId(), candidates);
   }
-  return { accounts, candidates };
+
+  if (!dryRun) store.replaceCandidates(currentRunId(), candidates);
+  logger.info(
+    { accounts: accounts.length, snapshots: snapshots.size, missingSnapshots, candidates: candidates.length, dryRun },
+    dryRun ? 'wake candidate selection dry run complete' : 'wake candidate selection complete'
+  );
+  return candidates;
 }
 
 async function runProbePhase(
@@ -292,7 +310,7 @@ async function doctor(config: AppConfig): Promise<void> {
 }
 
 const program = new Command();
-program.name('codex-awake').description('Refresh Codex quota metadata and wake dormant accounts').version('0.1.0');
+program.name('codex-awake').description('Refresh Codex quota metadata and wake accounts from stored snapshots').version('0.1.0');
 program.option('-c, --config <path>', 'config file path');
 
 program
@@ -304,20 +322,20 @@ program
   });
 
 program
-  .command('scan')
-  .description('refresh quota metadata and generate wake candidates')
-  .option('--dry-run', 'refresh quota and show candidates without saving them')
+  .command('refresh-quotas')
+  .description('refresh quota metadata and store the results in SQLite')
+  .option('--dry-run', 'refresh quota and show results without saving them')
   .option('--limit-accounts <n>', 'maximum number of accounts to refresh')
   .action(async (options: { dryRun?: boolean; limitAccounts?: string }) => {
     const opts = program.opts<GlobalOptions>();
     await withStore(opts.config, async (config, store) => {
-      const result = await scan(
+      const accounts = await refreshQuotaSnapshots(
         config,
         store,
         Boolean(options.dryRun),
         parseOptionalLimit(options.limitAccounts, '--limit-accounts')
       );
-      logger.info({ candidates: result.candidates.length }, 'scan complete');
+      logger.info({ accounts: accounts.length, dryRun: Boolean(options.dryRun) }, 'quota refresh complete');
     });
   });
 
@@ -337,26 +355,19 @@ program
   });
 
 program
-  .command('run')
-  .description('scan quota metadata, create candidates, then probe them')
-  .option('--dry-run', 'refresh quota and show candidates without saving candidates or running codex exec')
+  .command('wake')
+  .description('select candidates from the latest stored quota snapshots, then wake them')
+  .option('--dry-run', 'show candidates from stored snapshots without saving them or running codex exec')
   .option('--limit-probes <n>', 'maximum number of probes to run')
-  .option('--limit-accounts <n>', 'maximum number of accounts to refresh')
   .option('--probe-model <model>', 'override probe model for this run')
   .option('--probe-prompt <prompt>', 'override probe prompt for this run')
   .action(async (options: ProbeOptions) => {
     const opts = program.opts<GlobalOptions>();
     await withStore(opts.config, async (config, store) => {
-      const { accounts, candidates } = await scan(
-        config,
-        store,
-        Boolean(options.dryRun),
-        parseOptionalLimit(options.limitAccounts, '--limit-accounts')
-      );
-      logger.info({ candidates: candidates.length }, 'scan phase complete');
+      const accounts = await loadAuthAccounts(config.authDir);
+      const candidates = selectWakeCandidates(config, store, accounts, Boolean(options.dryRun));
       if (options.dryRun) {
         logger.info({ candidates: candidates.length }, 'dry run complete; no probe executed');
-        void accounts;
         return;
       }
       await runProbePhase(config, store, accounts, options);

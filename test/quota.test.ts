@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildWakeCandidates, collectQuotaWindows } from '../src/quota.js';
-import type { QuotaFetchResult } from '../src/types.js';
+import { buildWakeCandidates, buildWakeCandidatesFromSnapshot, collectQuotaWindows } from '../src/quota.js';
+import type { QuotaFetchResult, QuotaSnapshot } from '../src/types.js';
 
 const observedAtMs = 1_700_000_000_000;
 
@@ -150,5 +150,28 @@ describe('candidate detection', () => {
       false
     );
     expect(candidates).toHaveLength(1);
+  });
+
+  it('selects candidates from persisted quota data without fetching quota again', () => {
+    const snapshot: QuotaSnapshot = {
+      statusCode: 200,
+      ok: 1,
+      observedAtMs,
+      createdAtMs: observedAtMs,
+      planType: null,
+      windowsJson: JSON.stringify([
+        {
+          scope: 'rate_limit.secondary_window',
+          kind: 'weekly',
+          usedPercent: 0,
+          limitWindowSeconds: 604_800,
+          resetAtMs: null,
+          resetAfterSeconds: 604_800,
+          remainingSeconds: 604_800
+        }
+      ]),
+      error: null
+    };
+    expect(buildWakeCandidatesFromSnapshot(baseResult.account, snapshot, 180, 5, false)).toHaveLength(1);
   });
 });

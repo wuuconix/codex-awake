@@ -59,6 +59,17 @@ export type QuotaFetchResult = {
   error: string | null;
 };
 
+/** The fields needed to select wake candidates from a persisted quota refresh. */
+export type QuotaSnapshot = {
+  statusCode: number | null;
+  ok: number | null;
+  observedAtMs: number | null;
+  createdAtMs: number | null;
+  planType: string | null;
+  windowsJson: string | null;
+  error: string | null;
+};
+
 export type WakeCandidate = {
   accountKey: string;
   authIndex: string;

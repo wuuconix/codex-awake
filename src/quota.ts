@@ -1,4 +1,11 @@
-import type { AppConfig, AuthAccount, QuotaFetchResult, QuotaWindow, WakeCandidate } from './types.js';
+import type {
+  AppConfig,
+  AuthAccount,
+  QuotaFetchResult,
+  QuotaSnapshot,
+  QuotaWindow,
+  WakeCandidate
+} from './types.js';
 import {
   MAX_MONTH_SECONDS,
   MIN_MONTH_SECONDS,
@@ -223,6 +230,58 @@ export function buildWakeCandidates(
     });
   }
   return candidates;
+}
+
+function parseStoredWindows(windowsJson: string | null): QuotaWindow[] {
+  if (!windowsJson) return [];
+  try {
+    const parsed: unknown = JSON.parse(windowsJson);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((item): QuotaWindow[] => {
+      if (!isRecord(item) || typeof item.scope !== 'string') return [];
+      const kind = item.kind;
+      if (kind !== 'weekly' && kind !== 'monthly' && kind !== 'other') return [];
+      return [
+        {
+          scope: item.scope,
+          kind,
+          usedPercent: normalizeNumber(item.usedPercent),
+          limitWindowSeconds: normalizeNumber(item.limitWindowSeconds),
+          resetAtMs: normalizeNumber(item.resetAtMs),
+          resetAfterSeconds: normalizeNumber(item.resetAfterSeconds),
+          remainingSeconds: normalizeNumber(item.remainingSeconds)
+        }
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** Build wake candidates from a quota snapshot already persisted in SQLite. */
+export function buildWakeCandidatesFromSnapshot(
+  account: AuthAccount,
+  snapshot: QuotaSnapshot,
+  toleranceSeconds: number,
+  maxUsedPercent: number,
+  recentlyProbed: boolean
+): WakeCandidate[] {
+  return buildWakeCandidates(
+    {
+      account,
+      statusCode: snapshot.statusCode ?? 0,
+      ok: snapshot.ok === 1,
+      observedAtMs: snapshot.observedAtMs ?? snapshot.createdAtMs ?? 0,
+      planType: snapshot.planType,
+      subscriptionActiveUntil: null,
+      bodySummary: null,
+      windows: parseStoredWindows(snapshot.windowsJson),
+      error: snapshot.error
+    },
+    toleranceSeconds,
+    maxUsedPercent,
+    recentlyProbed
+  );
 }
 
 export async function refreshQuotas(
