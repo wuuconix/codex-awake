@@ -1,6 +1,8 @@
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { describe, expect, it } from 'vitest';
-import { buildWakeCandidates, buildWakeCandidatesFromSnapshot, collectQuotaWindows } from '../src/quota.js';
-import type { QuotaFetchResult, QuotaSnapshot } from '../src/types.js';
+import { buildWakeCandidates, buildWakeCandidatesFromSnapshot, collectQuotaWindows, refreshQuotas } from '../src/quota.js';
+import type { AppConfig, AuthAccount, QuotaFetchResult, QuotaSnapshot } from '../src/types.js';
 
 const observedAtMs = 1_700_000_000_000;
 
@@ -175,3 +177,80 @@ describe('candidate detection', () => {
     expect(buildWakeCandidatesFromSnapshot(baseResult.account, snapshot, 180, 5, false)).toHaveLength(1);
   });
 });
+
+describe('quota refresh', () => {
+  it('refreshes disabled accounts as well as enabled accounts', async () => {
+    const authorizationHeaders: string[] = [];
+    const server = createServer((request, response) => {
+      authorizationHeaders.push(request.headers.authorization ?? '');
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{}');
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server did not expose a TCP port');
+      const config: AppConfig = {
+        authDir: '',
+        dbPath: '',
+        quotaUrl: `http://127.0.0.1:${address.port}`,
+        quotaConcurrency: 1,
+        quotaDelayMs: 0,
+        quotaTimeoutMs: 1_000,
+        proxyUrl: '',
+        userAgent: 'quota-test',
+        codexBin: 'codex',
+        codexHomeParentDir: '',
+        probeModel: 'gpt-5',
+        probePrompt: 'test',
+        probeTimeoutMs: 1_000,
+        probeMinIntervalMs: 0,
+        probeCooldownMs: 0,
+        probeVerifyAttempts: 1,
+        probeVerifyDelayMs: 0,
+        probeVerifyToleranceSeconds: 0,
+        probeVerifyIntervalMs: 0,
+        dormantToleranceSeconds: 0,
+        dormantMaxUsedPercent: 0
+      };
+      const enabled: AuthAccount = {
+        ...baseAccount(),
+        accountKey: 'enabled',
+        accessToken: 'enabled-token'
+      };
+      const disabled: AuthAccount = {
+        ...baseAccount(),
+        accountKey: 'disabled',
+        disabled: true,
+        accessToken: 'disabled-token'
+      };
+
+      const results = await refreshQuotas([enabled, disabled], config, () => undefined);
+
+      expect(results.map((result) => result.account.accountKey)).toEqual(['enabled', 'disabled']);
+      expect(authorizationHeaders).toEqual(['Bearer enabled-token', 'Bearer disabled-token']);
+    } finally {
+      server.close();
+      await once(server, 'close');
+    }
+  });
+});
+
+function baseAccount(): AuthAccount {
+  return {
+    accountKey: 'account',
+    authIndex: 'idx',
+    filePath: 'a.json',
+    fileName: 'a.json',
+    email: 'a@example.com',
+    accountId: 'account',
+    planType: null,
+    disabled: false,
+    accessToken: 'token',
+    idToken: null,
+    refreshToken: null,
+    rawAuth: {}
+  };
+}

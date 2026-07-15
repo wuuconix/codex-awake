@@ -52,7 +52,7 @@ npm run show-quota-resets
 | 命令 | 作用 |
 | --- | --- |
 | `npm run doctor` | 检查认证目录、SQLite 数据库和 Codex CLI 是否可用。 |
-| `npm run refresh-quotas` | 刷新启用账号的额度，并将结果保存到 SQLite。不会创建或执行唤醒任务。 |
+| `npm run refresh-quotas` | 刷新全部账号（包括已禁用账号）的额度，并将结果保存到 SQLite。不会创建或执行唤醒任务。 |
 | `npm run wake` | 读取最新保存的额度快照，生成候选队列并执行唤醒。不会再次刷新额度。 |
 | `npm run show` | 用简洁表格查看运行状态；可通过 `npm run show -- --limit 20` 扩大明细行数。 |
 | `npm run show-quota-resets` | 按额度重置时间查看账号。 |

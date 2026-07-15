@@ -289,22 +289,21 @@ export async function refreshQuotas(
   config: AppConfig,
   onResult: (result: QuotaFetchResult) => Promise<void> | void
 ): Promise<QuotaFetchResult[]> {
-  const enabled = accounts.filter((account) => !account.disabled);
   const results: QuotaFetchResult[] = [];
   let nextIndex = 0;
 
   async function worker(workerIndex: number): Promise<void> {
-    while (nextIndex < enabled.length) {
+    while (nextIndex < accounts.length) {
       const index = nextIndex;
       nextIndex += 1;
       if (index > 0 || workerIndex > 0) await sleep(config.quotaDelayMs);
-      const result = await fetchQuota(enabled[index]!, config);
+      const result = await fetchQuota(accounts[index]!, config);
       results.push(result);
       await onResult(result);
     }
   }
 
-  const workers = Array.from({ length: Math.min(config.quotaConcurrency, enabled.length) }, (_, index) =>
+  const workers = Array.from({ length: Math.min(config.quotaConcurrency, accounts.length) }, (_, index) =>
     worker(index)
   );
   await Promise.all(workers);
