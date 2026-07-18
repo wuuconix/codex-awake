@@ -56,7 +56,7 @@ npm run show-quota-resets
 | `npm run wake` | 读取最新保存的额度快照，生成候选队列并执行唤醒。不会再次刷新额度。 |
 | `npm run show` | 用简洁表格查看运行状态；可通过 `npm run show -- --limit 20` 扩大明细行数。 |
 | `npm run show-quota-resets` | 按额度重置时间查看账号。 |
-| `npm run set-cpa-priorities` | 按 SQLite 中的额度重置时间设置 CPA 认证文件优先级；额度耗尽的账号会被禁用，可用时会重新启用。 |
+| `npm run set-cpa-priorities` | 按 SQLite 中的额度重置时间设置 CPA 认证文件优先级；剩余额度高于配置阈值的账号启用，达到或低于阈值的账号禁用。 |
 
 所有 CLI 命令都可以加 `--config <路径>` 使用另一份配置，例如：
 
@@ -75,6 +75,7 @@ node dist/cli.js --config /root/codex-awake/config.json show
 | `proxyUrl` | 可选 HTTP/HTTPS 代理地址；留空表示不显式设置代理。 |
 | `codexBin` | `codex` 可执行文件路径。 |
 | `quotaConcurrency` / `quotaDelayMs` | 额度接口的并发数与请求间隔。 |
+| `cpaMinRemainingPercent` | `set-cpa-priorities` 的 CPA 剩余额度阈值，默认 `5`；剩余额度大于该值时启用，等于或低于该值时禁用。 |
 | `probeMinIntervalMs` / `probeCooldownMs` | 全局探测间隔与同账号冷却时间。 |
 | `probeModel` / `probePrompt` | 唤醒探测使用的模型和提示词。 |
 

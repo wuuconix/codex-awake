@@ -190,7 +190,8 @@ async function setCpaPriorities(
   }
 
   const fullPlan = buildCpaPriorityPlan(accounts, store.listLatestQuotaSnapshots(), {
-    clearMissingReset: !options.keepMissingResetPriority
+    clearMissingReset: !options.keepMissingResetPriority,
+    minRemainingPercent: config.cpaMinRemainingPercent
   });
   const enabledCount = accounts.filter((account) => !account.disabled).length;
   const knownResetCount = fullPlan.filter((item) => item.reason === 'reset-known').length;

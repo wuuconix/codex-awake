@@ -17,7 +17,7 @@ export type CpaPriorityPlanItem = {
   priority: number;
   priorityAction: 'set' | 'clear' | 'keep';
   disabled: boolean;
-  reason: 'reset-known' | 'missing-reset' | 'quota-exhausted' | 'disabled-with-quota' | 'disabled-cleanup';
+  reason: 'reset-known' | 'missing-reset' | 'quota-below-threshold' | 'disabled-with-quota' | 'disabled-cleanup';
 };
 
 export type CpaPriorityApplyResult = CpaPriorityPlanItem & {
@@ -73,18 +73,23 @@ function hasRawPriority(account: AuthAccount): boolean {
   return isRecord(account.rawAuth) && Object.prototype.hasOwnProperty.call(account.rawAuth, 'priority');
 }
 
-function quotaAvailability(window: ResetWindow | null): 'available' | 'exhausted' | 'unknown' {
+function quotaAvailability(
+  window: ResetWindow | null,
+  minRemainingPercent: number
+): 'available' | 'below-threshold' | 'unknown' {
   const usedPercent = normalizeNumber(window?.usedPercent);
   if (usedPercent === null) return 'unknown';
-  return usedPercent >= 100 ? 'exhausted' : 'available';
+  const remainingPercent = Math.max(0, Math.min(100, 100 - usedPercent));
+  return remainingPercent > minRemainingPercent ? 'available' : 'below-threshold';
 }
 
 export function buildCpaPriorityPlan(
   accounts: AuthAccount[],
   rows: LatestQuotaSnapshotRow[],
-  options: { clearMissingReset?: boolean } = {}
+  options: { clearMissingReset?: boolean; minRemainingPercent?: number } = {}
 ): CpaPriorityPlanItem[] {
   const clearMissingReset = options.clearMissingReset ?? true;
+  const minRemainingPercent = options.minRemainingPercent ?? 5;
   const rowsByAccountKey = new Map(rows.map((row) => [row.accountKey, row]));
   const known: Array<{ account: AuthAccount; resetAtMs: number; reason: CpaPriorityPlanItem['reason'] }> = [];
   const missing: CpaPriorityPlanItem[] = [];
@@ -94,16 +99,16 @@ export function buildCpaPriorityPlan(
     const row = rowsByAccountKey.get(account.accountKey);
     const window = row ? pickDisplayWindow(row) : null;
     const resetAtMs = row ? inferredResetAtMs(row, window) : null;
-    const availability = quotaAvailability(window);
+    const availability = quotaAvailability(window, minRemainingPercent);
 
-    if (availability === 'exhausted') {
+    if (availability === 'below-threshold') {
       maintenance.push({
         account,
         resetAtMs,
         priority: 0,
         priorityAction: 'clear',
         disabled: true,
-        reason: 'quota-exhausted'
+        reason: 'quota-below-threshold'
       });
       continue;
     }

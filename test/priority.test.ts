@@ -96,7 +96,7 @@ describe('CPA priority assignment', () => {
         ['later@example.com', 1, false, 'reset-known'],
         ['missing@example.com', 0, false, 'missing-reset'],
         ['disabled-cleanup@example.com', 0, true, 'disabled-cleanup'],
-        ['exhausted@example.com', 0, true, 'quota-exhausted']
+        ['exhausted@example.com', 0, true, 'quota-below-threshold']
       ]);
 
       const results = await applyCpaPriorityPlan(plan);
@@ -118,6 +118,41 @@ describe('CPA priority assignment', () => {
       expect(disabledCleanup).toMatchObject({ disabled: true });
       expect(disabledCleanup).not.toHaveProperty('priority');
       expect(disabledCleanup).not.toHaveProperty('websockets');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('disables accounts at or below the configured remaining quota threshold', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'codex-awake-priority-threshold-test-'));
+    try {
+      const files = {
+        above: path.join(dir, 'codex-above.json'),
+        at: path.join(dir, 'codex-at.json'),
+        below: path.join(dir, 'codex-below.json')
+      };
+      await Promise.all(
+        Object.entries(files).map(([name, filePath]) =>
+          writeFile(filePath, JSON.stringify({ type: 'codex', email: `${name}@example.com`, access_token: name }))
+        )
+      );
+
+      const accounts = await loadAuthAccounts(dir);
+      const plan = buildCpaPriorityPlan(
+        accounts,
+        [
+          snapshot('above@example.com', 'codex-above.json', observedAtMs + 60_000, 94),
+          snapshot('at@example.com', 'codex-at.json', observedAtMs + 120_000, 95),
+          snapshot('below@example.com', 'codex-below.json', observedAtMs + 180_000, 96)
+        ],
+        { minRemainingPercent: 5 }
+      );
+
+      expect(plan.map((item) => [item.account.email, item.disabled, item.reason])).toEqual([
+        ['above@example.com', false, 'reset-known'],
+        ['at@example.com', true, 'quota-below-threshold'],
+        ['below@example.com', true, 'quota-below-threshold']
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

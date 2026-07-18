@@ -16,6 +16,7 @@
   "probeVerifyToleranceSeconds": 30,
   "dormantToleranceSeconds": 180,
   "dormantMaxUsedPercent": 5,
+  "cpaMinRemainingPercent": 5,
   "probeModel": "gpt-5.4-mini",
   "probePrompt": "Run pwd, then reply OK.",
   "codexBin": "/root/.local/bin/codex",

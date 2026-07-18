@@ -16,6 +16,7 @@ export type AppConfig = {
   probeVerifyToleranceSeconds: number;
   dormantToleranceSeconds: number;
   dormantMaxUsedPercent: number;
+  cpaMinRemainingPercent: number;
   probeModel: string;
   probePrompt: string;
   codexBin: string;

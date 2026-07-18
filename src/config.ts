@@ -28,6 +28,7 @@ const ConfigSchema = z.object({
   probeVerifyToleranceSeconds: z.number().int().min(0).default(30),
   dormantToleranceSeconds: z.number().int().min(0).default(180),
   dormantMaxUsedPercent: z.number().min(0).max(100).default(5),
+  cpaMinRemainingPercent: z.number().min(0).max(100).default(5),
   probeModel: z.string().min(1).default('gpt-5.4-mini'),
   probePrompt: z.string().min(1).default('hi'),
   codexBin: z.string().min(1).default('codex'),
